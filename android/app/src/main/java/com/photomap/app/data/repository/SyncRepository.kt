@@ -19,29 +19,39 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import java.util.concurrent.TimeUnit
 
+interface GallerySyncController {
+    val pendingCount: Flow<Int>
+    val failedCount: Flow<Int>
+    val uploadingCount: Flow<Int>
+    val uploadedCount: Flow<Int>
+
+    suspend fun scanAndSync()
+    suspend fun retryFailed()
+}
+
 class SyncRepository(
     private val context: Context,
     private val scanner: MediaStoreScanner,
     private val localAssetDao: LocalAssetDao,
     private val settingsStore: SyncSettingsStore,
-) {
+) : GallerySyncController {
     private val workManager = WorkManager.getInstance(context)
 
-    val pendingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.PENDING)
-    val failedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.FAILED)
-    val uploadingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADING)
-    val uploadedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADED)
+    override val pendingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.PENDING)
+    override val failedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.FAILED)
+    override val uploadingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADING)
+    override val uploadedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADED)
     val maxParallelUploads: StateFlow<Int> = settingsStore.maxParallelUploads
     val backgroundSyncEnabled: StateFlow<Boolean> = settingsStore.backgroundSyncEnabled
     val wifiOnly: StateFlow<Boolean> = settingsStore.wifiOnly
     val includeVideos: StateFlow<Boolean> = settingsStore.includeVideos
 
-    suspend fun scanAndSync() {
+    override suspend fun scanAndSync() {
         scanner.scan()
         enqueueSync()
     }
 
-    suspend fun retryFailed() {
+    override suspend fun retryFailed() {
         localAssetDao.retryFailed()
         enqueueSync()
     }

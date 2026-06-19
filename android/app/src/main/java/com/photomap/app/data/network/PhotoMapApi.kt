@@ -40,6 +40,13 @@ interface PhotoMapApi {
     suspend fun listAssets(
         @Query("limit") limit: Int,
         @Query("cursor") cursor: String?,
+        @Query("mediaType") mediaType: String? = null,
+        @Query("favorite") favorite: Boolean? = null,
+        @Query("archived") archived: Boolean? = null,
+        @Query("trashed") trashed: Boolean? = null,
+        @Query("city") city: String? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
     ): AssetListResponse
 
     @GET("assets/{id}")
@@ -57,6 +64,58 @@ interface PhotoMapApi {
         @Body request: FavoriteRequest,
     ): AssetDetailDto
 
+    @PATCH("assets/{id}/archive")
+    suspend fun updateArchive(
+        @Path("id") id: String,
+        @Body request: ArchiveRequest,
+    ): AssetDetailDto
+
     @POST("assets/{id}/trash")
     suspend fun trashAsset(@Path("id") id: String): AssetDetailDto
+
+    @POST("assets/{id}/restore")
+    suspend fun restoreAsset(@Path("id") id: String): AssetDetailDto
+
+    @DELETE("assets/{id}")
+    suspend fun deleteAsset(@Path("id") id: String)
+
+    @GET("search")
+    suspend fun searchAssets(
+        @Query("q") query: String,
+        @Query("limit") limit: Int,
+        @Query("cursor") cursor: String?,
+    ): AssetListResponse
+
+    @POST("albums")
+    suspend fun createAlbum(@Body request: CreateAlbumRequest): AlbumDto
+
+    @GET("albums")
+    suspend fun listAlbums(): AlbumListResponse
+
+    @GET("albums/{id}")
+    suspend fun getAlbum(@Path("id") id: String): AlbumDto
+
+    @PATCH("albums/{id}")
+    suspend fun updateAlbum(
+        @Path("id") id: String,
+        @Body request: UpdateAlbumRequest,
+    ): AlbumDto
+
+    @DELETE("albums/{id}")
+    suspend fun deleteAlbum(@Path("id") id: String)
+
+    @POST("albums/{id}/assets")
+    suspend fun addAssetToAlbum(
+        @Path("id") id: String,
+        @Body request: AddAssetToAlbumRequest,
+    )
+
+    @DELETE("albums/{id}/assets/{assetId}")
+    suspend fun removeAssetFromAlbum(
+        @Path("id") id: String,
+        @Path("assetId") assetId: String,
+    )
+
+    @GET("albums/{id}/assets")
+    suspend fun listAlbumAssets(@Path("id") id: String): AssetListResponse
 }

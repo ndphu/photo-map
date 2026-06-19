@@ -175,3 +175,34 @@ data class ReadUrlResponse(val url: String)
 
 @JsonClass(generateAdapter = true)
 data class FavoriteRequest(val isFavorite: Boolean)
+
+@JsonClass(generateAdapter = true)
+data class ArchiveRequest(val isArchived: Boolean)
+
+@JsonClass(generateAdapter = true)
+data class AlbumDto(
+    val id: String,
+    val name: String,
+    val description: String?,
+    val coverAssetId: String?,
+    val isArchived: Boolean,
+    val createdAt: String,
+    val updatedAt: String,
+)
+
+@JsonClass(generateAdapter = true)
+data class AlbumListResponse(val items: List<AlbumDto>)
+
+@JsonClass(generateAdapter = true)
+data class CreateAlbumRequest(val name: String, val description: String?)
+
+@JsonClass(generateAdapter = true)
+data class UpdateAlbumRequest(
+    val name: String? = null,
+    val description: String? = null,
+    val coverAssetId: String? = null,
+    val isArchived: Boolean? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class AddAssetToAlbumRequest(val assetId: String, val sortOrder: Long? = null)
