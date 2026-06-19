@@ -58,6 +58,7 @@ go run ./cmd/api
 - `R2_PRESIGNED_UPLOAD_EXPIRES_SECONDS`
 - `R2_PRESIGNED_READ_EXPIRES_SECONDS`
 - `PORT`
+- `ADMIN_EMAILS` (comma-separated emails allowed to call maintenance endpoints)
 
 ## Endpoints
 
@@ -70,3 +71,13 @@ Returns:
   "status": "ok"
 }
 ```
+
+### Upload session cleanup
+
+Administrators can inspect expired incomplete sessions without deleting objects:
+
+```bash
+go run ./cmd/maintenance cleanup-upload-sessions --dry-run --older-than=24h --limit=100
+```
+
+Remove `--dry-run` to delete unreferenced R2 objects and mark their sessions expired. The same operation is available at `POST /maintenance/upload-sessions/cleanup` for authenticated users listed in `ADMIN_EMAILS`.

@@ -46,19 +46,53 @@ RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, 
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
   completed_at, created_at, updated_at;
 
+-- name: GetActiveUploadSessionByLocalAsset :one
+SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at
+FROM upload_sessions
+WHERE user_id = $1::uuid
+  AND device_id = $2::uuid
+  AND local_asset_id = $3
+  AND status IN ('created', 'uploading', 'uploaded', 'processing')
+  AND expires_at > now()
+ORDER BY expires_at DESC
+LIMIT 1;
+
 -- name: GetUploadSessionForUpdate :one
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
   completed_at, created_at, updated_at
 FROM upload_sessions
-WHERE id = $1::uuid
+WHERE id = $1::uuid AND user_id = $2::uuid
 FOR UPDATE;
 
--- name: CompleteUploadSession :one
+-- name: ResumeUploadSession :one
+UPDATE upload_sessions
+SET expires_at = $3,
+  status = CASE WHEN status IN ('failed', 'expired') THEN 'created' ELSE status END,
+  error_message = NULL
+WHERE id = $1::uuid AND user_id = $2::uuid
+RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at;
+
+-- name: UpdateUploadSessionStatus :one
+UPDATE upload_sessions
+SET status = $3, error_message = $4
+WHERE id = $1::uuid AND user_id = $2::uuid
+RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at;
+
+-- name: MarkUploadSessionCompleted :one
 UPDATE upload_sessions
 SET status = 'completed', asset_id = $2::uuid, completed_at = now()
-WHERE id = $1::uuid
+WHERE id = $1::uuid AND user_id = $3::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
@@ -76,12 +110,35 @@ VALUES (
   $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
   $21, $22, $23
 )
+ON CONFLICT (user_id, checksum_sha256)
+DO UPDATE SET checksum_sha256 = EXCLUDED.checksum_sha256
 RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
   preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
   is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+
+-- name: GetAssetByChecksum :one
+SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
+  preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
+  checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
+  width, height, orientation, duration_ms, latitude, longitude, country, region, city,
+  place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+FROM assets
+WHERE user_id = $1::uuid AND checksum_sha256 = $2;
+
+-- name: GetAssetByUploadSessionID :one
+SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, a.thumbnail_key,
+  a.preview_key, a.poster_frame_key, a.media_type, a.mime_type, a.original_filename, a.file_size_bytes,
+  a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
+  a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
+  a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+FROM upload_sessions us
+JOIN assets a ON a.id = us.asset_id
+WHERE us.id = $1::uuid AND us.user_id = $2::uuid AND a.user_id = $2::uuid;
 
 -- name: GetAssetByIDForUser :one
 SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
@@ -195,6 +252,26 @@ DO UPDATE SET
   last_error = EXCLUDED.last_error,
   last_synced_at = EXCLUDED.last_synced_at;
 
+-- name: GetDeviceAssetByLocalID :one
+SELECT asset_id::text
+FROM device_assets
+WHERE user_id = $1::uuid AND device_id = $2::uuid AND local_asset_id = $3;
+
+-- name: UpsertDeviceAssetToAsset :exec
+INSERT INTO device_assets (
+  user_id, device_id, asset_id, local_asset_id, local_created_at, local_modified_at,
+  sync_status, last_synced_at
+)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'synced', now())
+ON CONFLICT (user_id, device_id, local_asset_id)
+DO UPDATE SET
+  asset_id = EXCLUDED.asset_id,
+  local_created_at = coalesce(EXCLUDED.local_created_at, device_assets.local_created_at),
+  local_modified_at = coalesce(EXCLUDED.local_modified_at, device_assets.local_modified_at),
+  sync_status = 'synced',
+  last_error = NULL,
+  last_synced_at = now();
+
 -- name: CreateAlbum :one
 INSERT INTO albums (user_id, name, description, cover_asset_id)
 VALUES ($1::uuid, $2, $3, $4::uuid)
@@ -256,3 +333,38 @@ WHERE a.user_id = $1::uuid
   AND asm.search_vector @@ plainto_tsquery('english', $2)
 ORDER BY ts_rank(asm.search_vector, plainto_tsquery('english', $2)) DESC, a.taken_at DESC NULLS LAST
 LIMIT $3 OFFSET $4;
+
+-- name: ListExpiredIncompleteUploadSessions :many
+SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at
+FROM upload_sessions
+WHERE status IN ('created', 'uploading', 'uploaded', 'failed', 'expired')
+  AND asset_id IS NULL
+  AND expires_at < $1
+ORDER BY expires_at ASC
+LIMIT $2;
+
+-- name: MarkUploadSessionExpired :one
+UPDATE upload_sessions
+SET status = 'expired', error_message = $3
+WHERE id = $1::uuid
+  AND user_id = $2::uuid
+  AND asset_id IS NULL
+  AND status IN ('created', 'uploading', 'uploaded', 'failed', 'expired')
+RETURNING id::text;
+
+-- name: CheckObjectKeyUsedByAsset :one
+SELECT EXISTS (
+  SELECT 1
+  FROM assets
+  WHERE object_key = $1
+    OR thumbnail_key = $1
+    OR preview_key = $1
+    OR poster_frame_key = $1
+);
+
+-- name: CreateAuditLog :exec
+INSERT INTO audit_logs (user_id, action, entity_type, entity_id, metadata)
+VALUES ($1::uuid, $2, $3, $4::uuid, $5::jsonb);

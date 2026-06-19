@@ -38,8 +38,10 @@ INSERT INTO assets (
 VALUES (
   $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
   $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-  $21, $22, $23
+	$21, $22, $23
 )
+ON CONFLICT (user_id, checksum_sha256)
+DO UPDATE SET checksum_sha256 = EXCLUDED.checksum_sha256
 RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
   preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
@@ -124,6 +126,47 @@ type GetAssetByIDForUserParams struct {
 func (q *Queries) GetAssetByIDForUser(ctx context.Context, arg GetAssetByIDForUserParams) (Asset, error) {
 	row := q.db.QueryRow(ctx, getAssetByIDForUser, arg.ID, arg.UserID)
 	return scanAsset(row)
+}
+
+const getAssetByChecksum = `
+SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
+  preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
+  checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
+  width, height, orientation, duration_ms, latitude, longitude, country, region, city,
+  place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+FROM assets
+WHERE user_id = $1::uuid AND checksum_sha256 = $2
+`
+
+type GetAssetByChecksumParams struct {
+	UserID         string
+	ChecksumSha256 string
+}
+
+func (q *Queries) GetAssetByChecksum(ctx context.Context, arg GetAssetByChecksumParams) (Asset, error) {
+	return scanAsset(q.db.QueryRow(ctx, getAssetByChecksum, arg.UserID, arg.ChecksumSha256))
+}
+
+const getAssetByUploadSessionID = `
+SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, a.thumbnail_key,
+  a.preview_key, a.poster_frame_key, a.media_type, a.mime_type, a.original_filename, a.file_size_bytes,
+  a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
+  a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
+  a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+FROM upload_sessions us
+JOIN assets a ON a.id = us.asset_id
+WHERE us.id = $1::uuid AND us.user_id = $2::uuid AND a.user_id = $2::uuid
+`
+
+type GetAssetByUploadSessionIDParams struct {
+	ID     string
+	UserID string
+}
+
+func (q *Queries) GetAssetByUploadSessionID(ctx context.Context, arg GetAssetByUploadSessionIDParams) (Asset, error) {
+	return scanAsset(q.db.QueryRow(ctx, getAssetByUploadSessionID, arg.ID, arg.UserID))
 }
 
 const listAssetsTimeline = `
@@ -352,6 +395,63 @@ type CreateOrUpdateDeviceAssetParams struct {
 
 func (q *Queries) CreateOrUpdateDeviceAsset(ctx context.Context, arg CreateOrUpdateDeviceAssetParams) error {
 	_, err := q.db.Exec(ctx, createOrUpdateDeviceAsset, arg.UserID, arg.DeviceID, arg.AssetID, arg.LocalAssetID, arg.LocalURI, arg.LocalCreatedAt, arg.LocalModifiedAt, arg.SyncStatus, arg.LastError, arg.LastSyncedAt)
+	return err
+}
+
+const getDeviceAssetByLocalID = `
+SELECT asset_id::text
+FROM device_assets
+WHERE user_id = $1::uuid AND device_id = $2::uuid AND local_asset_id = $3
+`
+
+type GetDeviceAssetByLocalIDParams struct {
+	UserID       string
+	DeviceID     string
+	LocalAssetID string
+}
+
+func (q *Queries) GetDeviceAssetByLocalID(ctx context.Context, arg GetDeviceAssetByLocalIDParams) (*string, error) {
+	var assetID *string
+	err := q.db.QueryRow(ctx, getDeviceAssetByLocalID, arg.UserID, arg.DeviceID, arg.LocalAssetID).Scan(&assetID)
+	return assetID, err
+}
+
+const upsertDeviceAssetToAsset = `
+INSERT INTO device_assets (
+  user_id, device_id, asset_id, local_asset_id, local_created_at, local_modified_at,
+  sync_status, last_synced_at
+)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'synced', now())
+ON CONFLICT (user_id, device_id, local_asset_id)
+DO UPDATE SET
+  asset_id = EXCLUDED.asset_id,
+  local_created_at = coalesce(EXCLUDED.local_created_at, device_assets.local_created_at),
+  local_modified_at = coalesce(EXCLUDED.local_modified_at, device_assets.local_modified_at),
+  sync_status = 'synced',
+  last_error = NULL,
+  last_synced_at = now()
+`
+
+type UpsertDeviceAssetToAssetParams struct {
+	UserID          string
+	DeviceID        string
+	AssetID         string
+	LocalAssetID    string
+	LocalCreatedAt  *time.Time
+	LocalModifiedAt *time.Time
+}
+
+func (q *Queries) UpsertDeviceAssetToAsset(ctx context.Context, arg UpsertDeviceAssetToAssetParams) error {
+	_, err := q.db.Exec(
+		ctx,
+		upsertDeviceAssetToAsset,
+		arg.UserID,
+		arg.DeviceID,
+		arg.AssetID,
+		arg.LocalAssetID,
+		arg.LocalCreatedAt,
+		arg.LocalModifiedAt,
+	)
 	return err
 }
 

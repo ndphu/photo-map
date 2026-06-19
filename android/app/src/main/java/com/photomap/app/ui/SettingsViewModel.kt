@@ -20,9 +20,20 @@ class SettingsViewModel(private val repository: SyncRepository) : ViewModel() {
         SharingStarted.WhileSubscribed(5_000),
         0,
     )
+    val uploadingCount: StateFlow<Int> = repository.uploadingCount.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        0,
+    )
+    val uploadedCount: StateFlow<Int> = repository.uploadedCount.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        0,
+    )
     val maxParallelUploads: StateFlow<Int> = repository.maxParallelUploads
     val backgroundSyncEnabled: StateFlow<Boolean> = repository.backgroundSyncEnabled
     val wifiOnly: StateFlow<Boolean> = repository.wifiOnly
+    val includeVideos: StateFlow<Boolean> = repository.includeVideos
 
     fun sync() {
         viewModelScope.launch { repository.scanAndSync() }
@@ -42,6 +53,10 @@ class SettingsViewModel(private val repository: SyncRepository) : ViewModel() {
 
     fun setWifiOnly(enabled: Boolean) {
         repository.setWifiOnly(enabled)
+    }
+
+    fun setIncludeVideos(enabled: Boolean) {
+        viewModelScope.launch { repository.setIncludeVideos(enabled) }
     }
 }
 

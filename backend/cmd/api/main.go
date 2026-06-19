@@ -100,11 +100,13 @@ func buildRouter(logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) *gi
 	uploadService := service.NewUploadService(pool, queries, storageService, cfg)
 	assetService := service.NewAssetService(queries, storageService, cfg)
 	albumService := service.NewAlbumService(queries, storageService, cfg)
+	maintenanceService := service.NewMaintenanceService(pool, queries, storageService)
 	authHandler := handler.NewAuthHandler(authService)
 	deviceHandler := handler.NewDeviceHandler(deviceService)
 	uploadHandler := handler.NewUploadHandler(uploadService)
 	assetHandler := handler.NewAssetHandler(assetService)
 	albumHandler := handler.NewAlbumHandler(albumService)
+	maintenanceHandler := handler.NewMaintenanceHandler(maintenanceService)
 
 	router.POST("/auth/register", authHandler.Register)
 	router.POST("/auth/login", authHandler.Login)
@@ -114,6 +116,8 @@ func buildRouter(logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) *gi
 	protected.POST("/devices/register", deviceHandler.Register)
 	protected.GET("/devices/me", deviceHandler.Me)
 	protected.POST("/upload-sessions", uploadHandler.CreateSession)
+	protected.POST("/upload-sessions/:id/resume", uploadHandler.Resume)
+	protected.PATCH("/upload-sessions/:id/status", uploadHandler.UpdateStatus)
 	protected.POST("/upload-sessions/:id/complete", uploadHandler.Complete)
 	protected.GET("/assets", assetHandler.List)
 	protected.GET("/assets/:id", assetHandler.Get)
@@ -132,6 +136,10 @@ func buildRouter(logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) *gi
 	protected.POST("/albums/:id/assets", albumHandler.AddAsset)
 	protected.DELETE("/albums/:id/assets/:assetId", albumHandler.RemoveAsset)
 	protected.GET("/albums/:id/assets", albumHandler.ListAssets)
+
+	maintenance := protected.Group("/maintenance")
+	maintenance.Use(appmiddleware.AdminOnly(cfg.AdminEmails))
+	maintenance.POST("/upload-sessions/cleanup", maintenanceHandler.CleanupUploadSessions)
 
 	return router
 }

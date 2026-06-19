@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +34,7 @@ fun AssetDetailScreen(
     onBack: () -> Unit,
     onFavorite: () -> Unit,
     onTrash: () -> Unit,
+    onRetry: () -> Unit,
 ) {
     Scaffold(
         topBar = {
@@ -91,7 +93,12 @@ fun AssetDetailScreen(
                 )
             }
             state.error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(16.dp))
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                    Button(onClick = onRetry, enabled = !state.loading) {
+                        Text("Retry")
+                    }
+                }
             }
         }
     }

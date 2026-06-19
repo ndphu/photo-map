@@ -20,6 +20,9 @@ data class LocalAssetEntity(
     val remoteAssetId: String?,
     val lastError: String?,
     val lastSyncedAt: Long?,
+    val uploadSessionId: String? = null,
+    val uploadAttemptCount: Int = 0,
+    val nextRetryAt: Long? = null,
 )
 
 object SyncStatus {
@@ -27,4 +30,5 @@ object SyncStatus {
     const val UPLOADING = "uploading"
     const val UPLOADED = "uploaded"
     const val FAILED = "failed"
+    const val SKIPPED = "skipped"
 }

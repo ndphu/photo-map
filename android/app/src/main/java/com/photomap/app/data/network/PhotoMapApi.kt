@@ -21,6 +21,15 @@ interface PhotoMapApi {
     @POST("upload-sessions")
     suspend fun createUploadSession(@Body request: CreateUploadSessionRequest): UploadSessionResponse
 
+    @POST("upload-sessions/{id}/resume")
+    suspend fun resumeUploadSession(@Path("id") id: String): UploadSessionResponse
+
+    @PATCH("upload-sessions/{id}/status")
+    suspend fun updateUploadSessionStatus(
+        @Path("id") id: String,
+        @Body request: UpdateUploadSessionStatusRequest,
+    ): UploadSessionStatusResponse
+
     @POST("upload-sessions/{id}/complete")
     suspend fun completeUpload(
         @Path("id") id: String,

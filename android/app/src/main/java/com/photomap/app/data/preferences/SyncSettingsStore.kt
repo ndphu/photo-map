@@ -21,11 +21,18 @@ class SyncSettingsStore(context: Context) {
     )
     val wifiOnly: StateFlow<Boolean> = _wifiOnly.asStateFlow()
 
+    private val _includeVideos = MutableStateFlow(
+        preferences.getBoolean(KEY_INCLUDE_VIDEOS, DEFAULT_INCLUDE_VIDEOS),
+    )
+    val includeVideos: StateFlow<Boolean> = _includeVideos.asStateFlow()
+
     fun currentMaxParallelUploads(): Int = _maxParallelUploads.value
 
     fun isBackgroundSyncEnabled(): Boolean = _backgroundSyncEnabled.value
 
     fun isWifiOnly(): Boolean = _wifiOnly.value
+
+    fun shouldIncludeVideos(): Boolean = _includeVideos.value
 
     fun setMaxParallelUploads(value: Int) {
         val normalized = value.coerceIn(MIN_PARALLEL_UPLOADS, MAX_PARALLEL_UPLOADS)
@@ -43,6 +50,11 @@ class SyncSettingsStore(context: Context) {
         _wifiOnly.value = enabled
     }
 
+    fun setIncludeVideos(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_INCLUDE_VIDEOS, enabled).apply()
+        _includeVideos.value = enabled
+    }
+
     private fun readMaxParallelUploads(): Int = preferences
         .getInt(KEY_MAX_PARALLEL_UPLOADS, DEFAULT_MAX_PARALLEL_UPLOADS)
         .coerceIn(MIN_PARALLEL_UPLOADS, MAX_PARALLEL_UPLOADS)
@@ -56,7 +68,9 @@ class SyncSettingsStore(context: Context) {
         private const val KEY_MAX_PARALLEL_UPLOADS = "max_parallel_uploads"
         private const val KEY_BACKGROUND_SYNC_ENABLED = "background_sync_enabled"
         private const val KEY_WIFI_ONLY = "wifi_only"
+        private const val KEY_INCLUDE_VIDEOS = "include_videos"
         private const val DEFAULT_BACKGROUND_SYNC_ENABLED = true
         private const val DEFAULT_WIFI_ONLY = true
+        private const val DEFAULT_INCLUDE_VIDEOS = true
     }
 }

@@ -4,6 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -83,6 +84,10 @@ fun PhotoMapApp(container: AppContainer) {
                 factory = GalleryViewModelFactory(container.assetRepository),
             )
             val state by viewModel.state.collectAsStateWithLifecycle()
+            LifecycleResumeEffect(viewModel) {
+                viewModel.refresh()
+                onPauseOrDispose {}
+            }
             MediaPermissionGate(
                 onGranted = {
                     scope.launch { container.syncRepository.scanAndSync() }
@@ -93,6 +98,7 @@ fun PhotoMapApp(container: AppContainer) {
                     onAsset = { navController.navigate(Routes.detail(it)) },
                     onSettings = { navController.navigate(Routes.SETTINGS) },
                     onLoadNext = viewModel::loadNext,
+                    onRefresh = viewModel::refresh,
                 )
             }
         }
@@ -112,6 +118,7 @@ fun PhotoMapApp(container: AppContainer) {
                 onBack = navController::popBackStack,
                 onFavorite = viewModel::toggleFavorite,
                 onTrash = viewModel::trash,
+                onRetry = viewModel::retry,
             )
         }
 
@@ -121,21 +128,28 @@ fun PhotoMapApp(container: AppContainer) {
             )
             val pending by viewModel.pendingCount.collectAsStateWithLifecycle()
             val failed by viewModel.failedCount.collectAsStateWithLifecycle()
+            val uploading by viewModel.uploadingCount.collectAsStateWithLifecycle()
+            val uploaded by viewModel.uploadedCount.collectAsStateWithLifecycle()
             val maxParallelUploads by viewModel.maxParallelUploads.collectAsStateWithLifecycle()
             val backgroundSyncEnabled by viewModel.backgroundSyncEnabled.collectAsStateWithLifecycle()
             val wifiOnly by viewModel.wifiOnly.collectAsStateWithLifecycle()
+            val includeVideos by viewModel.includeVideos.collectAsStateWithLifecycle()
             SettingsScreen(
                 pendingCount = pending,
                 failedCount = failed,
+                uploadingCount = uploading,
+                uploadedCount = uploaded,
                 maxParallelUploads = maxParallelUploads,
                 backgroundSyncEnabled = backgroundSyncEnabled,
                 wifiOnly = wifiOnly,
+                includeVideos = includeVideos,
                 onBack = navController::popBackStack,
                 onSync = viewModel::sync,
                 onRetry = viewModel::retryFailed,
                 onMaxParallelUploadsChange = viewModel::setMaxParallelUploads,
                 onBackgroundSyncChange = viewModel::setBackgroundSyncEnabled,
                 onWifiOnlyChange = viewModel::setWifiOnly,
+                onIncludeVideosChange = viewModel::setIncludeVideos,
                 onLogout = {
                     container.syncRepository.cancelAllSync()
                     container.authRepository.logout()

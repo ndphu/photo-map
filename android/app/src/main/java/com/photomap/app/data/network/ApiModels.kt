@@ -57,14 +57,39 @@ data class CreateUploadSessionRequest(
 
 @JsonClass(generateAdapter = true)
 data class UploadSessionResponse(
+    val status: String,
+    val asset: UploadAssetDto? = null,
+    val session: UploadSessionDto? = null,
+    val uploadUrls: UploadUrlsDto? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class UploadAssetDto(
     val id: String,
+)
+
+@JsonClass(generateAdapter = true)
+data class UploadSessionDto(
+    val id: String,
+    val status: String,
     val bucket: String,
     val objectKey: String,
     val thumbnailKey: String,
     val previewKey: String,
     val posterFrameKey: String?,
-    val uploadUrls: UploadUrlsDto,
     val expiresAt: String,
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateUploadSessionStatusRequest(
+    val status: String,
+    val errorMessage: String? = null,
+)
+
+@JsonClass(generateAdapter = true)
+data class UploadSessionStatusResponse(
+    val status: String,
+    val errorMessage: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

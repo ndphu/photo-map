@@ -15,6 +15,7 @@ const (
 	authorizationHeader = "Authorization"
 	bearerPrefix        = "Bearer "
 	userIDContextKey    = "userID"
+	emailContextKey     = "email"
 )
 
 func Auth(verifier *auth.TokenManager) gin.HandlerFunc {
@@ -35,8 +36,22 @@ func Auth(verifier *auth.TokenManager) gin.HandlerFunc {
 		}
 
 		ctx.Set(userIDContextKey, claims.Subject)
+		ctx.Set(emailContextKey, strings.ToLower(claims.Email))
 		ctx.Next()
 	}
+}
+
+func Email(ctx *gin.Context) (string, error) {
+	value, exists := ctx.Get(emailContextKey)
+	if !exists {
+		return "", errors.New("authenticated email is missing")
+	}
+
+	email, ok := value.(string)
+	if !ok || email == "" {
+		return "", errors.New("authenticated email is invalid")
+	}
+	return email, nil
 }
 
 func UserID(ctx *gin.Context) (string, error) {

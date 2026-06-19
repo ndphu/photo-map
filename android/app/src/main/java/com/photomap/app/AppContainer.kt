@@ -3,6 +3,7 @@ package com.photomap.app
 import android.content.Context
 import androidx.room.Room
 import com.photomap.app.data.local.PhotoMapDatabase
+import com.photomap.app.data.local.MIGRATION_1_2
 import com.photomap.app.data.media.MediaMetadataExtractor
 import com.photomap.app.data.media.MediaStoreScanner
 import com.photomap.app.data.media.MediaVariantGenerator
@@ -27,7 +28,9 @@ class AppContainer(context: Context) {
         appContext,
         PhotoMapDatabase::class.java,
         "photo-map.db",
-    ).build()
+    )
+        .addMigrations(MIGRATION_1_2)
+        .build()
 
     val mediaScanner = MediaStoreScanner(appContext, database.localAssetDao())
     val metadataExtractor = MediaMetadataExtractor(appContext)

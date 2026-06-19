@@ -17,6 +17,8 @@ type UploadHandler struct {
 	uploadService *service.UploadService
 }
 
+const uploadSessionStatusCreated = "created"
+
 type createUploadSessionRequest struct {
 	DeviceID               string  `json:"deviceId" binding:"required"`
 	LocalAssetID           string  `json:"localAssetId" binding:"required"`
@@ -43,6 +45,11 @@ type completeUploadSessionRequest struct {
 	Software              *string    `json:"software"`
 	LocalCreatedAt        *time.Time `json:"localCreatedAt"`
 	LocalModifiedAt       *time.Time `json:"localModifiedAt"`
+}
+
+type updateUploadSessionStatusRequest struct {
+	Status       string  `json:"status" binding:"required,oneof=uploading uploaded failed"`
+	ErrorMessage *string `json:"errorMessage"`
 }
 
 func NewUploadHandler(uploadService *service.UploadService) *UploadHandler {
@@ -81,11 +88,19 @@ func (handler *UploadHandler) CreateSession(ctx *gin.Context) {
 			util.WriteError(ctx, http.StatusNotFound, "device_not_found", "device not found")
 			return
 		}
+		if errors.Is(err, service.ErrUploadExpired) {
+			util.WriteError(ctx, http.StatusConflict, "upload_session_expired", "upload session expired")
+			return
+		}
 		util.WriteInternalError(ctx, err)
 		return
 	}
 
-	ctx.JSON(http.StatusCreated, response)
+	statusCode := http.StatusOK
+	if response.Status == uploadSessionStatusCreated {
+		statusCode = http.StatusCreated
+	}
+	ctx.JSON(statusCode, response)
 }
 
 func (handler *UploadHandler) Complete(ctx *gin.Context) {
@@ -135,6 +150,69 @@ func (handler *UploadHandler) Complete(ctx *gin.Context) {
 		return
 	}
 
+	ctx.JSON(http.StatusOK, response)
+}
+
+func (handler *UploadHandler) Resume(ctx *gin.Context) {
+	userID, err := appmiddleware.UserID(ctx)
+	if err != nil {
+		util.WriteError(ctx, http.StatusUnauthorized, "unauthorized", "authenticated user is required")
+		return
+	}
+
+	uploadSessionID := strings.TrimSpace(ctx.Param("id"))
+	if uploadSessionID == "" {
+		util.WriteError(ctx, http.StatusBadRequest, "invalid_request", "upload session id is required")
+		return
+	}
+
+	response, err := handler.uploadService.Resume(ctx.Request.Context(), userID, uploadSessionID)
+	if err != nil {
+		if errors.Is(err, service.ErrUploadNotFound) {
+			util.WriteError(ctx, http.StatusNotFound, "upload_session_not_found", "upload session not found")
+			return
+		}
+		util.WriteInternalError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, response)
+}
+
+func (handler *UploadHandler) UpdateStatus(ctx *gin.Context) {
+	userID, err := appmiddleware.UserID(ctx)
+	if err != nil {
+		util.WriteError(ctx, http.StatusUnauthorized, "unauthorized", "authenticated user is required")
+		return
+	}
+
+	uploadSessionID := strings.TrimSpace(ctx.Param("id"))
+	if uploadSessionID == "" {
+		util.WriteError(ctx, http.StatusBadRequest, "invalid_request", "upload session id is required")
+		return
+	}
+
+	var request updateUploadSessionStatusRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil {
+		util.WriteError(ctx, http.StatusBadRequest, "invalid_request", "invalid upload status request")
+		return
+	}
+	response, err := handler.uploadService.UpdateStatus(ctx.Request.Context(), service.UpdateUploadStatusParams{
+		UserID:          userID,
+		UploadSessionID: uploadSessionID,
+		Status:          request.Status,
+		ErrorMessage:    request.ErrorMessage,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrUploadNotFound):
+			util.WriteError(ctx, http.StatusNotFound, "upload_session_not_found", "upload session not found")
+		case errors.Is(err, service.ErrInvalidUploadTransition):
+			util.WriteError(ctx, http.StatusConflict, "invalid_status_transition", "upload session status transition is not allowed")
+		default:
+			util.WriteInternalError(ctx, err)
+		}
+		return
+	}
 	ctx.JSON(http.StatusOK, response)
 }
 

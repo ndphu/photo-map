@@ -2,6 +2,7 @@ package com.photomap.app.data.repository
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.BackoffPolicy
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -28,9 +29,12 @@ class SyncRepository(
 
     val pendingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.PENDING)
     val failedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.FAILED)
+    val uploadingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADING)
+    val uploadedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.UPLOADED)
     val maxParallelUploads: StateFlow<Int> = settingsStore.maxParallelUploads
     val backgroundSyncEnabled: StateFlow<Boolean> = settingsStore.backgroundSyncEnabled
     val wifiOnly: StateFlow<Boolean> = settingsStore.wifiOnly
+    val includeVideos: StateFlow<Boolean> = settingsStore.includeVideos
 
     suspend fun scanAndSync() {
         scanner.scan()
@@ -49,6 +53,11 @@ class SyncRepository(
     private fun enqueueSync(policy: ExistingWorkPolicy) {
         val request = OneTimeWorkRequestBuilder<MediaSyncWorker>()
             .setConstraints(networkConstraints())
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                UPLOAD_BACKOFF_SECONDS,
+                TimeUnit.SECONDS,
+            )
             .build()
         workManager.enqueueUniqueWork(
             MediaSyncWorker.WORK_NAME,
@@ -100,6 +109,12 @@ class SyncRepository(
         enqueueSync(ExistingWorkPolicy.REPLACE)
     }
 
+    suspend fun setIncludeVideos(enabled: Boolean) {
+        settingsStore.setIncludeVideos(enabled)
+        if (enabled) localAssetDao.retrySkippedVideos()
+        enqueueSync(ExistingWorkPolicy.REPLACE)
+    }
+
     fun cancelAllSync() {
         workManager.cancelUniqueWork(MediaSyncWorker.WORK_NAME)
         workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME)
@@ -113,5 +128,6 @@ class SyncRepository(
 
     private companion object {
         const val BACKGROUND_SYNC_INTERVAL_HOURS = 1L
+        const val UPLOAD_BACKOFF_SECONDS = 30L
     }
 }

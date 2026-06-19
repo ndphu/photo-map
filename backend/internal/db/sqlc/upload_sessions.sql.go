@@ -73,38 +73,120 @@ func (q *Queries) CreateUploadSession(ctx context.Context, arg CreateUploadSessi
 	return scanUploadSession(row)
 }
 
+const getActiveUploadSessionByLocalAsset = `
+SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at
+FROM upload_sessions
+WHERE user_id = $1::uuid
+  AND device_id = $2::uuid
+  AND local_asset_id = $3
+  AND status IN ('created', 'uploading', 'uploaded', 'processing')
+  AND expires_at > now()
+ORDER BY expires_at DESC
+LIMIT 1
+`
+
+type GetActiveUploadSessionByLocalAssetParams struct {
+	UserID       string
+	DeviceID     string
+	LocalAssetID string
+}
+
+func (q *Queries) GetActiveUploadSessionByLocalAsset(ctx context.Context, arg GetActiveUploadSessionByLocalAssetParams) (UploadSession, error) {
+	row := q.db.QueryRow(ctx, getActiveUploadSessionByLocalAsset, arg.UserID, arg.DeviceID, arg.LocalAssetID)
+	return scanUploadSession(row)
+}
+
 const getUploadSessionForUpdate = `
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
   completed_at, created_at, updated_at
 FROM upload_sessions
-WHERE id = $1::uuid
+WHERE id = $1::uuid AND user_id = $2::uuid
 FOR UPDATE
 `
 
-func (q *Queries) GetUploadSessionForUpdate(ctx context.Context, id string) (UploadSession, error) {
-	row := q.db.QueryRow(ctx, getUploadSessionForUpdate, id)
+type GetUploadSessionForUpdateParams struct {
+	ID     string
+	UserID string
+}
+
+func (q *Queries) GetUploadSessionForUpdate(ctx context.Context, arg GetUploadSessionForUpdateParams) (UploadSession, error) {
+	row := q.db.QueryRow(ctx, getUploadSessionForUpdate, arg.ID, arg.UserID)
 	return scanUploadSession(row)
 }
 
-const completeUploadSession = `
+const resumeUploadSession = `
 UPDATE upload_sessions
-SET status = 'completed', asset_id = $2::uuid, completed_at = now()
-WHERE id = $1::uuid
+SET expires_at = $3,
+  status = CASE WHEN status IN ('failed', 'expired') THEN 'created' ELSE status END,
+  error_message = NULL
+WHERE id = $1::uuid AND user_id = $2::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
   completed_at, created_at, updated_at
 `
 
-type CompleteUploadSessionParams struct {
-	ID      string
-	AssetID string
+type ResumeUploadSessionParams struct {
+	ID        string
+	UserID    string
+	ExpiresAt time.Time
 }
 
-func (q *Queries) CompleteUploadSession(ctx context.Context, arg CompleteUploadSessionParams) (UploadSession, error) {
-	row := q.db.QueryRow(ctx, completeUploadSession, arg.ID, arg.AssetID)
+func (q *Queries) ResumeUploadSession(ctx context.Context, arg ResumeUploadSessionParams) (UploadSession, error) {
+	return scanUploadSession(q.db.QueryRow(ctx, resumeUploadSession, arg.ID, arg.UserID, arg.ExpiresAt))
+}
+
+const updateUploadSessionStatus = `
+UPDATE upload_sessions
+SET status = $3, error_message = $4
+WHERE id = $1::uuid AND user_id = $2::uuid
+RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at
+`
+
+type UpdateUploadSessionStatusParams struct {
+	ID           string
+	UserID       string
+	Status       string
+	ErrorMessage *string
+}
+
+func (q *Queries) UpdateUploadSessionStatus(ctx context.Context, arg UpdateUploadSessionStatusParams) (UploadSession, error) {
+	return scanUploadSession(q.db.QueryRow(
+		ctx,
+		updateUploadSessionStatus,
+		arg.ID,
+		arg.UserID,
+		arg.Status,
+		arg.ErrorMessage,
+	))
+}
+
+const markUploadSessionCompleted = `
+UPDATE upload_sessions
+SET status = 'completed', asset_id = $2::uuid, completed_at = now()
+WHERE id = $1::uuid AND user_id = $3::uuid
+RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
+  preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
+  file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
+  completed_at, created_at, updated_at
+`
+
+type MarkUploadSessionCompletedParams struct {
+	ID      string
+	AssetID string
+	UserID  string
+}
+
+func (q *Queries) MarkUploadSessionCompleted(ctx context.Context, arg MarkUploadSessionCompletedParams) (UploadSession, error) {
+	row := q.db.QueryRow(ctx, markUploadSessionCompleted, arg.ID, arg.AssetID, arg.UserID)
 	return scanUploadSession(row)
 }
 

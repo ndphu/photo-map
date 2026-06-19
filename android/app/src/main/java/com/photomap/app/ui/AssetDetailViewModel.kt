@@ -46,8 +46,14 @@ class AssetDetailViewModel(
         }
     }
 
+    fun retry() {
+        if (_state.value.loading) return
+        load()
+    }
+
     private fun load() {
         viewModelScope.launch {
+            _state.value = _state.value.copy(loading = true, error = null)
             runCatching {
                 repository.detail(assetId) to repository.previewUrl(assetId)
             }.onSuccess { (asset, url) ->

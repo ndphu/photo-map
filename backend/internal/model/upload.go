@@ -9,15 +9,27 @@ type UploadURLs struct {
 	PosterFrame *string `json:"posterFrame"`
 }
 
+type UploadSessionDetails struct {
+	ID             string    `json:"id"`
+	Status         string    `json:"status"`
+	Bucket         string    `json:"bucket"`
+	ObjectKey      string    `json:"objectKey"`
+	ThumbnailKey   string    `json:"thumbnailKey"`
+	PreviewKey     string    `json:"previewKey"`
+	PosterFrameKey *string   `json:"posterFrameKey"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+}
+
+type UploadSessionStatusResponse struct {
+	Status       string  `json:"status"`
+	ErrorMessage *string `json:"errorMessage,omitempty"`
+}
+
 type UploadSessionResponse struct {
-	ID             string     `json:"id"`
-	Bucket         string     `json:"bucket"`
-	ObjectKey      string     `json:"objectKey"`
-	ThumbnailKey   string     `json:"thumbnailKey"`
-	PreviewKey     string     `json:"previewKey"`
-	PosterFrameKey *string    `json:"posterFrameKey"`
-	UploadURLs     UploadURLs `json:"uploadUrls"`
-	ExpiresAt      time.Time  `json:"expiresAt"`
+	Status     string                `json:"status"`
+	Asset      *AssetDetail          `json:"asset,omitempty"`
+	Session    *UploadSessionDetails `json:"session,omitempty"`
+	UploadURLs *UploadURLs           `json:"uploadUrls,omitempty"`
 }
 
 type CompleteUploadResponse struct {

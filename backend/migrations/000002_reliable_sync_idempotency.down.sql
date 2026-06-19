@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_upload_sessions_user_device_local_status;
+DROP INDEX IF EXISTS upload_sessions_user_object_key_uidx;

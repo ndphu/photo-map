@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -27,6 +28,7 @@ type Config struct {
 	R2PresignedUploadExpiresSeconds int64
 	R2PresignedReadExpiresSeconds   int64
 	Port                            string
+	AdminEmails                     []string
 }
 
 func Load() (Config, error) {
@@ -45,6 +47,7 @@ func Load() (Config, error) {
 		R2PresignedUploadExpiresSeconds: getInt64("R2_PRESIGNED_UPLOAD_EXPIRES_SECONDS", int64(defaultPresignedUploadExpires.Seconds())),
 		R2PresignedReadExpiresSeconds:   getInt64("R2_PRESIGNED_READ_EXPIRES_SECONDS", int64(defaultPresignedReadExpires.Seconds())),
 		Port:                            getString("PORT", defaultPort),
+		AdminEmails:                     getCSV("ADMIN_EMAILS"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -52,6 +55,18 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func getCSV(key string) []string {
+	parts := strings.Split(os.Getenv(key), ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.ToLower(strings.TrimSpace(part))
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }
 
 func (cfg Config) R2Endpoint() string {

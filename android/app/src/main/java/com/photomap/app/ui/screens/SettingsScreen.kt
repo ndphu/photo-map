@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Add
@@ -29,15 +31,19 @@ import androidx.compose.ui.unit.dp
 fun SettingsScreen(
     pendingCount: Int,
     failedCount: Int,
+    uploadingCount: Int,
+    uploadedCount: Int,
     maxParallelUploads: Int,
     backgroundSyncEnabled: Boolean,
     wifiOnly: Boolean,
+    includeVideos: Boolean,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onRetry: () -> Unit,
     onMaxParallelUploadsChange: (Int) -> Unit,
     onBackgroundSyncChange: (Boolean) -> Unit,
     onWifiOnlyChange: (Boolean) -> Unit,
+    onIncludeVideosChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
     Scaffold(
@@ -56,7 +62,8 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(20.dp),
+                .padding(20.dp)
+                .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -66,6 +73,14 @@ fun SettingsScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Failed uploads")
                 Text(failedCount.toString())
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Uploading")
+                Text(uploadingCount.toString())
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Uploaded")
+                Text(uploadedCount.toString())
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -87,6 +102,17 @@ fun SettingsScreen(
                 Switch(
                     checked = wifiOnly,
                     onCheckedChange = onWifiOnlyChange,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Include videos")
+                Switch(
+                    checked = includeVideos,
+                    onCheckedChange = onIncludeVideosChange,
                 )
             }
             Row(

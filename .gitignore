@@ -38,5 +38,6 @@ Desktop.ini
 # Logs and temporary files
 *.log
 *.tmp
+*.go.[0-9]*
 *.swp
 *~

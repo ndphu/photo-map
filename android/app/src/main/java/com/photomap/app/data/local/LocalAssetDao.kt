@@ -11,8 +11,25 @@ interface LocalAssetDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDiscovered(assets: List<LocalAssetEntity>)
 
-    @Query("SELECT * FROM local_assets WHERE syncStatus IN (:statuses) ORDER BY takenAt ASC LIMIT :limit")
-    suspend fun pending(statuses: List<String>, limit: Int): List<LocalAssetEntity>
+    @Query(
+        """
+        SELECT * FROM local_assets
+        WHERE syncStatus IN (:statuses)
+          AND (nextRetryAt IS NULL OR nextRetryAt <= :now)
+        ORDER BY takenAt ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun readyForUpload(statuses: List<String>, now: Long, limit: Int): List<LocalAssetEntity>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM local_assets
+        WHERE syncStatus IN (:statuses)
+          AND (nextRetryAt IS NULL OR nextRetryAt <= :now)
+        """,
+    )
+    suspend fun countReadyForUpload(statuses: List<String>, now: Long): Int
 
     @Query("SELECT COUNT(*) FROM local_assets WHERE syncStatus = :status")
     suspend fun countByStatusOnce(status: String): Int
@@ -23,15 +40,71 @@ interface LocalAssetDao {
     @Query(
         """
         UPDATE local_assets
+        SET uploadSessionId = :uploadSessionId
+        WHERE localAssetId = :id
+        """,
+    )
+    suspend fun saveUploadSession(id: String, uploadSessionId: String)
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET syncStatus = :status, uploadAttemptCount = uploadAttemptCount + 1,
+            lastError = NULL, nextRetryAt = NULL
+        WHERE localAssetId = :id
+        """,
+    )
+    suspend fun beginUploadAttempt(id: String, status: String = SyncStatus.UPLOADING)
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET syncStatus = :status, lastError = :error, nextRetryAt = :nextRetryAt
+        WHERE localAssetId = :id
+        """,
+    )
+    suspend fun markFailed(
+        id: String,
+        error: String,
+        nextRetryAt: Long?,
+        status: String = SyncStatus.FAILED,
+    )
+
+    @Query("UPDATE local_assets SET uploadSessionId = NULL WHERE localAssetId = :id")
+    suspend fun clearUploadSession(id: String)
+
+    @Query(
+        """
+        UPDATE local_assets
         SET syncStatus = :status, remoteAssetId = :remoteAssetId,
-            lastError = NULL, lastSyncedAt = :syncedAt
+            lastError = NULL, lastSyncedAt = :syncedAt, nextRetryAt = NULL
         WHERE localAssetId = :id
         """,
     )
     suspend fun markUploaded(id: String, status: String, remoteAssetId: String, syncedAt: Long)
 
-    @Query("UPDATE local_assets SET syncStatus = :pending, lastError = NULL WHERE syncStatus = :failed")
+    @Query(
+        """
+        UPDATE local_assets
+        SET syncStatus = :pending, lastError = NULL, nextRetryAt = NULL,
+            uploadAttemptCount = 0
+        WHERE syncStatus = :failed
+        """,
+    )
     suspend fun retryFailed(failed: String = SyncStatus.FAILED, pending: String = SyncStatus.PENDING)
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET syncStatus = :pending, lastError = NULL, nextRetryAt = NULL,
+            uploadAttemptCount = 0
+        WHERE syncStatus = :skipped AND mediaType = 'video'
+        """,
+    )
+    suspend fun retrySkippedVideos(
+        skipped: String = SyncStatus.SKIPPED,
+        pending: String = SyncStatus.PENDING,
+    )
 
     @Query("UPDATE local_assets SET syncStatus = :pending WHERE syncStatus = :uploading")
     suspend fun resetInterruptedUploads(

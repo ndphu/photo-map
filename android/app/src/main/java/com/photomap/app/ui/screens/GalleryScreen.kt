@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -14,7 +15,9 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.BrokenImage
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -44,6 +47,7 @@ fun GalleryScreen(
     onAsset: (String) -> Unit,
     onSettings: () -> Unit,
     onLoadNext: () -> Unit,
+    onRefresh: () -> Unit,
 ) {
     val gridState = rememberLazyGridState()
 
@@ -62,6 +66,9 @@ fun GalleryScreen(
             TopAppBar(
                 title = { Text("Gallery") },
                 actions = {
+                    IconButton(onClick = onRefresh, enabled = !state.loading) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
+                    }
                     IconButton(onClick = onSettings) {
                         Icon(Icons.Outlined.Settings, contentDescription = "Settings")
                     }
@@ -89,13 +96,18 @@ fun GalleryScreen(
                 CircularProgressIndicator(Modifier.align(Alignment.Center))
             }
             state.error?.let {
-                Text(
-                    it,
-                    color = MaterialTheme.colorScheme.error,
+                Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter)
                         .padding(16.dp),
-                )
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                    Button(onClick = onRefresh, enabled = !state.loading) {
+                        Text("Retry")
+                    }
+                }
             }
         }
     }
