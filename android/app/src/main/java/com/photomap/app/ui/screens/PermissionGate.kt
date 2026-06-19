@@ -33,7 +33,7 @@ fun MediaPermissionGate(
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
-    val permissions = remember {
+    val mediaPermissions = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             arrayOf(
                 Manifest.permission.READ_MEDIA_IMAGES,
@@ -43,21 +43,50 @@ fun MediaPermissionGate(
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
     }
+    val requestedPermissions = remember {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            mediaPermissions + Manifest.permission.POST_NOTIFICATIONS
+        } else {
+            mediaPermissions
+        }
+    }
     var granted by remember {
         mutableStateOf(
-            permissions.all {
+            mediaPermissions.all {
                 ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
             },
         )
     }
+    var notificationRequestAttempted by remember { mutableStateOf(false) }
+    val notificationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) {
+        notificationRequestAttempted = true
+    }
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
-    ) { result ->
-        granted = permissions.all { result[it] == true }
+    ) {
+        notificationRequestAttempted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+        granted = mediaPermissions.all { permission ->
+            ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+        }
     }
 
     LaunchedEffect(granted) {
-        if (granted) onGranted()
+        if (granted) {
+            onGranted()
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                !notificationRequestAttempted &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.POST_NOTIFICATIONS,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                notificationRequestAttempted = true
+                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
     }
 
     if (granted) {
@@ -76,7 +105,12 @@ fun MediaPermissionGate(
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(vertical = 20.dp),
             )
-            Button(onClick = { launcher.launch(permissions) }) {
+            Button(
+                onClick = {
+                    notificationRequestAttempted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    launcher.launch(requestedPermissions)
+                },
+            ) {
                 Text("Allow media access")
             }
         }

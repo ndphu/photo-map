@@ -20,6 +20,9 @@ class SettingsViewModel(private val repository: SyncRepository) : ViewModel() {
         SharingStarted.WhileSubscribed(5_000),
         0,
     )
+    val maxParallelUploads: StateFlow<Int> = repository.maxParallelUploads
+    val backgroundSyncEnabled: StateFlow<Boolean> = repository.backgroundSyncEnabled
+    val wifiOnly: StateFlow<Boolean> = repository.wifiOnly
 
     fun sync() {
         viewModelScope.launch { repository.scanAndSync() }
@@ -27,6 +30,18 @@ class SettingsViewModel(private val repository: SyncRepository) : ViewModel() {
 
     fun retryFailed() {
         viewModelScope.launch { repository.retryFailed() }
+    }
+
+    fun setMaxParallelUploads(value: Int) {
+        repository.setMaxParallelUploads(value)
+    }
+
+    fun setBackgroundSyncEnabled(enabled: Boolean) {
+        repository.setBackgroundSyncEnabled(enabled)
+    }
+
+    fun setWifiOnly(enabled: Boolean) {
+        repository.setWifiOnly(enabled)
     }
 }
 

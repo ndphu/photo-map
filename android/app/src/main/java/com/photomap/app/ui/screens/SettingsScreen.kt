@@ -8,15 +8,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
@@ -25,9 +29,15 @@ import androidx.compose.ui.unit.dp
 fun SettingsScreen(
     pendingCount: Int,
     failedCount: Int,
+    maxParallelUploads: Int,
+    backgroundSyncEnabled: Boolean,
+    wifiOnly: Boolean,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onRetry: () -> Unit,
+    onMaxParallelUploadsChange: (Int) -> Unit,
+    onBackgroundSyncChange: (Boolean) -> Unit,
+    onWifiOnlyChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
     Scaffold(
@@ -57,6 +67,50 @@ fun SettingsScreen(
                 Text("Failed uploads")
                 Text(failedCount.toString())
             }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Background sync")
+                Switch(
+                    checked = backgroundSyncEnabled,
+                    onCheckedChange = onBackgroundSyncChange,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Wi-Fi only")
+                Switch(
+                    checked = wifiOnly,
+                    onCheckedChange = onWifiOnlyChange,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Parallel uploads")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = { onMaxParallelUploadsChange(maxParallelUploads - 1) },
+                        enabled = maxParallelUploads > MIN_PARALLEL_UPLOADS,
+                    ) {
+                        Icon(Icons.Outlined.Remove, contentDescription = "Decrease parallel uploads")
+                    }
+                    Text(maxParallelUploads.toString())
+                    IconButton(
+                        onClick = { onMaxParallelUploadsChange(maxParallelUploads + 1) },
+                        enabled = maxParallelUploads < MAX_PARALLEL_UPLOADS,
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "Increase parallel uploads")
+                    }
+                }
+            }
             Button(onClick = onSync, modifier = Modifier.fillMaxWidth()) {
                 Text("Scan and sync now")
             }
@@ -73,3 +127,6 @@ fun SettingsScreen(
         }
     }
 }
+
+private const val MIN_PARALLEL_UPLOADS = 1
+private const val MAX_PARALLEL_UPLOADS = 16

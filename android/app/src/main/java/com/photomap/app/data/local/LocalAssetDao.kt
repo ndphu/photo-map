@@ -14,6 +14,9 @@ interface LocalAssetDao {
     @Query("SELECT * FROM local_assets WHERE syncStatus IN (:statuses) ORDER BY takenAt ASC LIMIT :limit")
     suspend fun pending(statuses: List<String>, limit: Int): List<LocalAssetEntity>
 
+    @Query("SELECT COUNT(*) FROM local_assets WHERE syncStatus = :status")
+    suspend fun countByStatusOnce(status: String): Int
+
     @Query("UPDATE local_assets SET syncStatus = :status, lastError = :error WHERE localAssetId = :id")
     suspend fun updateStatus(id: String, status: String, error: String?)
 
@@ -29,6 +32,12 @@ interface LocalAssetDao {
 
     @Query("UPDATE local_assets SET syncStatus = :pending, lastError = NULL WHERE syncStatus = :failed")
     suspend fun retryFailed(failed: String = SyncStatus.FAILED, pending: String = SyncStatus.PENDING)
+
+    @Query("UPDATE local_assets SET syncStatus = :pending WHERE syncStatus = :uploading")
+    suspend fun resetInterruptedUploads(
+        uploading: String = SyncStatus.UPLOADING,
+        pending: String = SyncStatus.PENDING,
+    )
 
     @Query("SELECT COUNT(*) FROM local_assets WHERE syncStatus = :status")
     fun countByStatus(status: String): Flow<Int>

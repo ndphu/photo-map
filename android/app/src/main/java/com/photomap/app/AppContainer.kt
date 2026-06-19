@@ -7,6 +7,7 @@ import com.photomap.app.data.media.MediaMetadataExtractor
 import com.photomap.app.data.media.MediaStoreScanner
 import com.photomap.app.data.media.MediaVariantGenerator
 import com.photomap.app.data.network.ApiFactory
+import com.photomap.app.data.preferences.SyncSettingsStore
 import com.photomap.app.data.repository.AssetRepository
 import com.photomap.app.data.repository.AuthRepository
 import com.photomap.app.data.repository.SyncRepository
@@ -17,6 +18,7 @@ class AppContainer(context: Context) {
     private val appContext = context.applicationContext
 
     val tokenStore = SecureTokenStore(appContext)
+    val syncSettingsStore = SyncSettingsStore(appContext)
     private val apiAndClient = ApiFactory.create(tokenStore)
     val api = apiAndClient.first
     val uploadClient = OkHttpClient()
@@ -33,5 +35,10 @@ class AppContainer(context: Context) {
 
     val authRepository = AuthRepository(appContext, api, tokenStore)
     val assetRepository = AssetRepository(api)
-    val syncRepository = SyncRepository(appContext, mediaScanner, database.localAssetDao())
+    val syncRepository = SyncRepository(
+        appContext,
+        mediaScanner,
+        database.localAssetDao(),
+        syncSettingsStore,
+    )
 }

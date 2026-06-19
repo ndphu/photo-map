@@ -2,23 +2,35 @@ package com.photomap.app.data.repository
 
 import android.content.Context
 import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.photomap.app.data.local.LocalAssetDao
 import com.photomap.app.data.local.SyncStatus
 import com.photomap.app.data.media.MediaStoreScanner
+import com.photomap.app.data.preferences.SyncSettingsStore
 import com.photomap.app.worker.MediaSyncWorker
+import com.photomap.app.worker.PeriodicMediaScanWorker
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import java.util.concurrent.TimeUnit
 
 class SyncRepository(
     private val context: Context,
     private val scanner: MediaStoreScanner,
     private val localAssetDao: LocalAssetDao,
+    private val settingsStore: SyncSettingsStore,
 ) {
+    private val workManager = WorkManager.getInstance(context)
+
     val pendingCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.PENDING)
     val failedCount: Flow<Int> = localAssetDao.countByStatus(SyncStatus.FAILED)
+    val maxParallelUploads: StateFlow<Int> = settingsStore.maxParallelUploads
+    val backgroundSyncEnabled: StateFlow<Boolean> = settingsStore.backgroundSyncEnabled
+    val wifiOnly: StateFlow<Boolean> = settingsStore.wifiOnly
 
     suspend fun scanAndSync() {
         scanner.scan()
@@ -31,17 +43,75 @@ class SyncRepository(
     }
 
     fun enqueueSync() {
+        enqueueSync(ExistingWorkPolicy.KEEP)
+    }
+
+    private fun enqueueSync(policy: ExistingWorkPolicy) {
         val request = OneTimeWorkRequestBuilder<MediaSyncWorker>()
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build(),
-            )
+            .setConstraints(networkConstraints())
             .build()
-        WorkManager.getInstance(context).enqueueUniqueWork(
+        workManager.enqueueUniqueWork(
             MediaSyncWorker.WORK_NAME,
-            ExistingWorkPolicy.KEEP,
+            policy,
             request,
         )
+    }
+
+    fun restoreBackgroundSync(isLoggedIn: Boolean) {
+        if (isLoggedIn && settingsStore.isBackgroundSyncEnabled()) {
+            scheduleBackgroundSync()
+        } else {
+            workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME)
+        }
+    }
+
+    fun scheduleBackgroundSync() {
+        if (!settingsStore.isBackgroundSyncEnabled()) return
+
+        val request = PeriodicWorkRequestBuilder<PeriodicMediaScanWorker>(
+            BACKGROUND_SYNC_INTERVAL_HOURS,
+            TimeUnit.HOURS,
+        )
+            .setConstraints(networkConstraints())
+            .build()
+        workManager.enqueueUniquePeriodicWork(
+            PeriodicMediaScanWorker.WORK_NAME,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            request,
+        )
+    }
+
+    fun setMaxParallelUploads(value: Int) {
+        settingsStore.setMaxParallelUploads(value)
+    }
+
+    fun setBackgroundSyncEnabled(enabled: Boolean) {
+        settingsStore.setBackgroundSyncEnabled(enabled)
+        if (enabled) {
+            scheduleBackgroundSync()
+        } else {
+            workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME)
+        }
+    }
+
+    fun setWifiOnly(enabled: Boolean) {
+        settingsStore.setWifiOnly(enabled)
+        if (settingsStore.isBackgroundSyncEnabled()) scheduleBackgroundSync()
+        enqueueSync(ExistingWorkPolicy.REPLACE)
+    }
+
+    fun cancelAllSync() {
+        workManager.cancelUniqueWork(MediaSyncWorker.WORK_NAME)
+        workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME)
+    }
+
+    private fun networkConstraints(): Constraints = Constraints.Builder()
+        .setRequiredNetworkType(
+            if (settingsStore.isWifiOnly()) NetworkType.UNMETERED else NetworkType.CONNECTED,
+        )
+        .build()
+
+    private companion object {
+        const val BACKGROUND_SYNC_INTERVAL_HOURS = 1L
     }
 }

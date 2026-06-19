@@ -1,15 +1,29 @@
 package com.photomap.app.worker
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.Uri
+import android.os.Build
+import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.photomap.app.PhotoMapApplication
 import com.photomap.app.data.local.LocalAssetEntity
 import com.photomap.app.data.local.SyncStatus
 import com.photomap.app.data.network.CompleteUploadRequest
 import com.photomap.app.data.network.CreateUploadSessionRequest
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -19,6 +33,7 @@ import okio.BufferedSink
 import okio.source
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
 
 class MediaSyncWorker(
     appContext: Context,
@@ -26,33 +41,67 @@ class MediaSyncWorker(
 ) : CoroutineWorker(appContext, params) {
     private val container = (appContext.applicationContext as PhotoMapApplication).container
     private val dao = container.database.localAssetDao()
+    private val notificationManager = appContext.getSystemService(NotificationManager::class.java)
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val deviceId = container.tokenStore.deviceId() ?: return@withContext Result.failure()
-        if (container.tokenStore.accessToken() == null) {
-            return@withContext Result.failure()
+        val userId = container.tokenStore.userId() ?: return@withContext Result.failure()
+        if (container.tokenStore.accessToken() == null) return@withContext Result.failure()
+
+        dao.resetInterruptedUploads()
+        val total = dao.countByStatusOnce(SyncStatus.PENDING)
+        if (total == 0) return@withContext Result.success()
+
+        createNotificationChannel()
+        setForeground(createForegroundInfo(0, total))
+
+        val completed = AtomicInteger(0)
+        val maxParallelUploads = container.syncSettingsStore.currentMaxParallelUploads()
+        while (true) {
+            val pending = dao.pending(listOf(SyncStatus.PENDING), ASSETS_PER_BATCH)
+            if (pending.isEmpty()) break
+            uploadBatch(pending, deviceId, userId, maxParallelUploads, completed, total)
         }
 
-        val pending = dao.pending(listOf(SyncStatus.PENDING), MAX_ASSETS_PER_RUN)
-        pending.forEach { asset ->
-            runCatching { uploadAsset(asset, deviceId) }
-                .onFailure { error ->
-                    dao.updateStatus(
-                        asset.localAssetId,
-                        SyncStatus.FAILED,
-                        error.message ?: error::class.java.simpleName,
-                    )
-                }
-        }
-
-        if (dao.pending(listOf(SyncStatus.PENDING), 1).isNotEmpty()) {
-            Result.retry()
-        } else {
-            Result.success()
-        }
+        Result.success()
     }
 
-    private suspend fun uploadAsset(asset: LocalAssetEntity, deviceId: String) {
+    private suspend fun uploadBatch(
+        assets: List<LocalAssetEntity>,
+        deviceId: String,
+        userId: String,
+        maxParallelUploads: Int,
+        completed: AtomicInteger,
+        total: Int,
+    ) = supervisorScope {
+        val semaphore = Semaphore(maxParallelUploads)
+        assets.map { asset ->
+            async(Dispatchers.IO) {
+                semaphore.withPermit {
+                    try {
+                        uploadAsset(asset, deviceId, userId)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        dao.updateStatus(
+                            asset.localAssetId,
+                            SyncStatus.FAILED,
+                            error.message ?: error::class.java.simpleName,
+                        )
+                    } finally {
+                        val current = completed.incrementAndGet()
+                        notificationManager.notify(
+                            NOTIFICATION_ID,
+                            createNotification(current, total),
+                        )
+                    }
+                }
+            }
+        }.awaitAll()
+    }
+
+    private suspend fun uploadAsset(asset: LocalAssetEntity, deviceId: String, userId: String) {
+        ensureSessionIsActive(userId)
         dao.updateStatus(asset.localAssetId, SyncStatus.UPLOADING, null)
 
         val uri = Uri.parse(asset.uri)
@@ -77,6 +126,7 @@ class MediaSyncWorker(
             variants.posterFrame?.let { putBytes(url, it, "image/webp") }
         }
 
+        ensureSessionIsActive(userId)
         val metadata = container.metadataExtractor.extract(asset)
         val response = container.api.completeUpload(
             session.id,
@@ -105,6 +155,12 @@ class MediaSyncWorker(
             remoteAssetId = response.assetId,
             syncedAt = System.currentTimeMillis(),
         )
+    }
+
+    private fun ensureSessionIsActive(userId: String) {
+        if (container.tokenStore.accessToken() == null || container.tokenStore.userId() != userId) {
+            throw CancellationException("Authentication session ended")
+        }
     }
 
     private fun putOriginal(url: String, uri: Uri, mimeType: String, size: Long) {
@@ -149,8 +205,60 @@ class MediaSyncWorker(
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
+    private fun createNotificationChannel() {
+        val channel = NotificationChannel(
+            NOTIFICATION_CHANNEL_ID,
+            "Media uploads",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "Photo and video backup progress"
+        }
+        notificationManager.createNotificationChannel(channel)
+    }
+
+    private fun createForegroundInfo(completed: Int, total: Int): ForegroundInfo {
+        val notification = createNotification(completed, total)
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun createNotification(completed: Int, total: Int) = NotificationCompat.Builder(
+        applicationContext,
+        NOTIFICATION_CHANNEL_ID,
+    )
+        .setSmallIcon(android.R.drawable.stat_sys_upload)
+        .setContentTitle("Backing up media")
+        .setContentText("Processed $completed of $total")
+        .setContentIntent(createContentIntent())
+        .setProgress(total, completed.coerceAtMost(total), false)
+        .setOngoing(true)
+        .setOnlyAlertOnce(true)
+        .build()
+
+    private fun createContentIntent(): PendingIntent? {
+        val intent = applicationContext.packageManager
+            .getLaunchIntentForPackage(applicationContext.packageName)
+            ?.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            ?: return null
+        return PendingIntent.getActivity(
+            applicationContext,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
     companion object {
         const val WORK_NAME = "media-sync"
-        private const val MAX_ASSETS_PER_RUN = 20
+        private const val ASSETS_PER_BATCH = 64
+        private const val NOTIFICATION_CHANNEL_ID = "media_uploads"
+        private const val NOTIFICATION_ID = 1001
     }
 }

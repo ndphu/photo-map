@@ -49,6 +49,7 @@ fun PhotoMapApp(container: AppContainer) {
                 state = state,
                 onLogin = { email, password ->
                     viewModel.login(email, password) {
+                        container.syncRepository.scheduleBackgroundSync()
                         navController.navigate(Routes.GALLERY) {
                             popUpTo(Routes.LOGIN) { inclusive = true }
                         }
@@ -67,6 +68,7 @@ fun PhotoMapApp(container: AppContainer) {
                 state = state,
                 onRegister = { email, password, displayName ->
                     viewModel.register(email, password, displayName) {
+                        container.syncRepository.scheduleBackgroundSync()
                         navController.navigate(Routes.GALLERY) {
                             popUpTo(Routes.LOGIN) { inclusive = true }
                         }
@@ -119,13 +121,23 @@ fun PhotoMapApp(container: AppContainer) {
             )
             val pending by viewModel.pendingCount.collectAsStateWithLifecycle()
             val failed by viewModel.failedCount.collectAsStateWithLifecycle()
+            val maxParallelUploads by viewModel.maxParallelUploads.collectAsStateWithLifecycle()
+            val backgroundSyncEnabled by viewModel.backgroundSyncEnabled.collectAsStateWithLifecycle()
+            val wifiOnly by viewModel.wifiOnly.collectAsStateWithLifecycle()
             SettingsScreen(
                 pendingCount = pending,
                 failedCount = failed,
+                maxParallelUploads = maxParallelUploads,
+                backgroundSyncEnabled = backgroundSyncEnabled,
+                wifiOnly = wifiOnly,
                 onBack = navController::popBackStack,
                 onSync = viewModel::sync,
                 onRetry = viewModel::retryFailed,
+                onMaxParallelUploadsChange = viewModel::setMaxParallelUploads,
+                onBackgroundSyncChange = viewModel::setBackgroundSyncEnabled,
+                onWifiOnlyChange = viewModel::setWifiOnly,
                 onLogout = {
+                    container.syncRepository.cancelAllSync()
                     container.authRepository.logout()
                     navController.navigate(Routes.LOGIN) {
                         popUpTo(Routes.GALLERY) { inclusive = true }
