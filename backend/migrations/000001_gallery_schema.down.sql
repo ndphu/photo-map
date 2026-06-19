@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS asset_search_metadata;
+DROP TABLE IF EXISTS album_assets;
+DROP TABLE IF EXISTS albums;
+DROP TABLE IF EXISTS device_assets;
+DROP TABLE IF EXISTS upload_sessions;
+DROP TABLE IF EXISTS assets;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS app_users;
+DROP FUNCTION IF EXISTS set_updated_at();
+DROP EXTENSION IF EXISTS pgcrypto;

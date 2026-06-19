@@ -1,0 +1,42 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Go build and test output
+*.exe
+*.exe~
+*.test
+*.out
+coverage.*
+bin/
+
+# Go local caches
+.go-cache/
+.go-tmp/
+
+# Android and Gradle
+.gradle/
+.gradle-home/
+.gradle-build-cache/
+.gradle-dist/
+**/build/
+android/local.properties
+*.apk
+*.aab
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
