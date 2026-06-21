@@ -49,6 +49,12 @@ interface PhotoMapApi {
         @Query("to") to: String? = null,
     ): AssetListResponse
 
+    @GET("assets/changes")
+    suspend fun getAssetChanges(
+        @Query("cursor") cursor: Long,
+        @Query("limit") limit: Int,
+    ): AssetChangesResponseDto
+
     @GET("assets/{id}")
     suspend fun getAsset(@Path("id") id: String): AssetDetailDto
 

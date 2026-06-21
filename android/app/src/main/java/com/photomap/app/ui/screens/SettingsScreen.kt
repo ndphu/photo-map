@@ -1,8 +1,9 @@
 package com.photomap.app.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -10,21 +11,37 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Remove
+import androidx.compose.material.icons.outlined.CloudDownload
+import androidx.compose.material.icons.outlined.CloudSync
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Logout
+import androidx.compose.material.icons.outlined.Replay
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.photomap.app.data.cache.OfflineImageCacheStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -34,22 +51,37 @@ fun SettingsScreen(
     uploadingCount: Int,
     uploadedCount: Int,
     maxParallelUploads: Int,
+    uploadsPaused: Boolean,
+    parallelUploadPresets: List<Int>,
     backgroundSyncEnabled: Boolean,
     wifiOnly: Boolean,
     includeVideos: Boolean,
+    offlineImageCacheEnabled: Boolean,
+    imageCacheLimitMb: Int,
+    imageCacheLimitPresetsMb: List<Int>,
+    imageCacheStatus: OfflineImageCacheStatus,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onRetry: () -> Unit,
     onMaxParallelUploadsChange: (Int) -> Unit,
+    onUploadsPausedChange: (Boolean) -> Unit,
     onBackgroundSyncChange: (Boolean) -> Unit,
     onWifiOnlyChange: (Boolean) -> Unit,
     onIncludeVideosChange: (Boolean) -> Unit,
+    onOfflineImageCacheEnabledChange: (Boolean) -> Unit,
+    onImageCacheLimitChange: (Int) -> Unit,
+    onDownloadOfflineImages: () -> Unit,
+    onClearOfflineImageCache: () -> Unit,
     onLogout: () -> Unit,
 ) {
+    var cacheLimitMenuExpanded by remember { mutableStateOf(false) }
+    var parallelUploadsMenuExpanded by remember { mutableStateOf(false) }
+    var showClearCacheConfirmation by remember { mutableStateOf(false) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Sync") },
+                title = { Text("Settings") },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
@@ -62,97 +94,286 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(20.dp)
                 .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Pending uploads")
-                Text(pendingCount.toString())
+            SettingsSectionTitle("Cloud backup")
+            SettingSwitchRow("Background sync", backgroundSyncEnabled, onBackgroundSyncChange)
+            SettingsDivider()
+            SettingSwitchRow("Wi-Fi only", wifiOnly, onWifiOnlyChange)
+
+            SettingsSectionTitle("Upload queue")
+            SettingSwitchRow("Pause uploads", uploadsPaused, onUploadsPausedChange)
+            SettingsDivider()
+            SyncCountRow("Pending", pendingCount)
+            SettingsDivider()
+            SyncCountRow("Uploading", uploadingCount)
+            SettingsDivider()
+            SyncCountRow("Failed", failedCount, error = failedCount > 0)
+            SettingsDivider()
+            SyncCountRow("Uploaded", uploadedCount)
+            SettingsDivider()
+            SettingSwitchRow("Include videos", includeVideos, onIncludeVideosChange)
+            SettingsDivider()
+            ParallelUploadsRow(
+                maxParallelUploads = maxParallelUploads,
+                presets = parallelUploadPresets,
+                expanded = parallelUploadsMenuExpanded,
+                onExpandedChange = { parallelUploadsMenuExpanded = it },
+                onChange = onMaxParallelUploadsChange,
+            )
+            SettingsActionArea {
+                Button(
+                    onClick = onSync,
+                    enabled = !uploadsPaused,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.CloudSync, contentDescription = null)
+                    Text("Scan and sync now", modifier = Modifier.padding(start = 8.dp))
+                }
+                OutlinedButton(
+                    onClick = onRetry,
+                    enabled = failedCount > 0 && !uploadsPaused,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.Replay, contentDescription = null)
+                    Text("Retry failed", modifier = Modifier.padding(start = 8.dp))
+                }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Failed uploads")
-                Text(failedCount.toString())
+
+            SettingsSectionTitle("Offline images")
+            SettingSwitchRow(
+                label = "Offline image cache",
+                checked = offlineImageCacheEnabled,
+                onCheckedChange = onOfflineImageCacheEnabledChange,
+            )
+            SettingsDivider()
+            CacheLimitRow(
+                imageCacheLimitMb = imageCacheLimitMb,
+                presetsMb = imageCacheLimitPresetsMb,
+                enabled = offlineImageCacheEnabled,
+                expanded = cacheLimitMenuExpanded,
+                onExpandedChange = { cacheLimitMenuExpanded = it },
+                onLimitChange = onImageCacheLimitChange,
+            )
+            SettingsDivider()
+            SettingValueRow(
+                label = "Storage used",
+                value = formatCacheUsage(imageCacheStatus.cacheSizeBytes, imageCacheLimitMb),
+            )
+            CacheProgress(imageCacheStatus)
+            SettingsActionArea {
+                Button(
+                    onClick = onDownloadOfflineImages,
+                    enabled = offlineImageCacheEnabled && !imageCacheStatus.running,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.CloudDownload, contentDescription = null)
+                    Text("Download offline", modifier = Modifier.padding(start = 8.dp))
+                }
+                OutlinedButton(
+                    onClick = { showClearCacheConfirmation = true },
+                    enabled = imageCacheStatus.cacheSizeBytes > 0L,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.DeleteSweep, contentDescription = null)
+                    Text("Clear image cache", modifier = Modifier.padding(start = 8.dp))
+                }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Uploading")
-                Text(uploadingCount.toString())
+
+            SettingsSectionTitle("Account")
+            SettingsActionArea(bottomPadding = 32.dp) {
+                OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Logout, contentDescription = null)
+                    Text("Sign out", modifier = Modifier.padding(start = 8.dp))
+                }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Uploaded")
-                Text(uploadedCount.toString())
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Background sync")
-                Switch(
-                    checked = backgroundSyncEnabled,
-                    onCheckedChange = onBackgroundSyncChange,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Wi-Fi only")
-                Switch(
-                    checked = wifiOnly,
-                    onCheckedChange = onWifiOnlyChange,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Include videos")
-                Switch(
-                    checked = includeVideos,
-                    onCheckedChange = onIncludeVideosChange,
-                )
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Parallel uploads")
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = { onMaxParallelUploadsChange(maxParallelUploads - 1) },
-                        enabled = maxParallelUploads > MIN_PARALLEL_UPLOADS,
-                    ) {
-                        Icon(Icons.Outlined.Remove, contentDescription = "Decrease parallel uploads")
-                    }
+        }
+    }
+
+    if (showClearCacheConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheConfirmation = false },
+            title = { Text("Clear offline images?") },
+            text = { Text("Cached thumbnails and previews will be removed and offline image cache will be turned off. Cloud assets will not be deleted.") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showClearCacheConfirmation = false
+                        onClearOfflineImageCache()
+                    },
+                ) { Text("Clear cache") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheConfirmation = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun SettingsSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp),
+    )
+}
+
+@Composable
+private fun SettingSwitchRow(
+    label: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text(label) },
+        trailingContent = {
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
+        },
+    )
+}
+
+@Composable
+private fun SyncCountRow(label: String, count: Int, error: Boolean = false) {
+    SettingValueRow(
+        label = label,
+        value = count.toString(),
+        valueColor = if (error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+    )
+}
+
+@Composable
+private fun SettingValueRow(
+    label: String,
+    value: String,
+    valueColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    ListItem(
+        headlineContent = { Text(label) },
+        trailingContent = { Text(value, color = valueColor) },
+    )
+}
+
+@Composable
+private fun ParallelUploadsRow(
+    maxParallelUploads: Int,
+    presets: List<Int>,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onChange: (Int) -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text("Parallel uploads") },
+        trailingContent = {
+            Box {
+                OutlinedButton(onClick = { onExpandedChange(true) }) {
                     Text(maxParallelUploads.toString())
-                    IconButton(
-                        onClick = { onMaxParallelUploadsChange(maxParallelUploads + 1) },
-                        enabled = maxParallelUploads < MAX_PARALLEL_UPLOADS,
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = "Increase parallel uploads")
+                }
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { onExpandedChange(false) },
+                ) {
+                    presets.forEach { preset ->
+                        DropdownMenuItem(
+                            text = { Text(preset.toString()) },
+                            onClick = {
+                                onExpandedChange(false)
+                                onChange(preset)
+                            },
+                        )
                     }
                 }
             }
-            Button(onClick = onSync, modifier = Modifier.fillMaxWidth()) {
-                Text("Scan and sync now")
+        },
+    )
+}
+
+@Composable
+private fun CacheLimitRow(
+    imageCacheLimitMb: Int,
+    presetsMb: List<Int>,
+    enabled: Boolean,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    onLimitChange: (Int) -> Unit,
+) {
+    ListItem(
+        headlineContent = { Text("Cache limit") },
+        trailingContent = {
+            Box {
+                OutlinedButton(
+                    onClick = { onExpandedChange(true) },
+                    enabled = enabled,
+                ) {
+                    Text(formatCacheLimit(imageCacheLimitMb))
+                }
+                DropdownMenu(
+                    expanded = expanded,
+                    onDismissRequest = { onExpandedChange(false) },
+                ) {
+                    presetsMb.forEach { limitMb ->
+                        DropdownMenuItem(
+                            text = { Text(formatCacheLimit(limitMb)) },
+                            onClick = {
+                                onExpandedChange(false)
+                                onLimitChange(limitMb)
+                            },
+                        )
+                    }
+                }
             }
-            OutlinedButton(
-                onClick = onRetry,
-                enabled = failedCount > 0,
+        },
+    )
+}
+
+@Composable
+private fun CacheProgress(status: OfflineImageCacheStatus) {
+    if (!status.running && status.errorMessage == null) return
+    Column(
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (status.running) {
+            val total = status.total.coerceAtLeast(1)
+            LinearProgressIndicator(
+                progress = { status.completed.toFloat() / total },
                 modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Retry failed uploads")
-            }
-            OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
-                Text("Sign out")
-            }
+            )
+            Text(
+                text = "${status.completed} of ${status.total} cached",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        status.errorMessage?.let { message ->
+            Text(message, color = MaterialTheme.colorScheme.error)
         }
     }
 }
 
-private const val MIN_PARALLEL_UPLOADS = 1
-private const val MAX_PARALLEL_UPLOADS = 16
+@Composable
+private fun SettingsActionArea(
+    bottomPadding: androidx.compose.ui.unit.Dp = 8.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = Modifier.padding(start = 20.dp, end = 20.dp, top = 12.dp, bottom = bottomPadding),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        content = content,
+    )
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp))
+}
+
+private const val BYTES_PER_MEGABYTE = 1024L * 1024L
+
+private fun formatCacheLimit(limitMb: Int): String =
+    if (limitMb >= 1024) "${limitMb / 1024} GB" else "$limitMb MB"
+
+private fun formatCacheUsage(bytes: Long, limitMb: Int): String {
+    val usedMb = bytes / BYTES_PER_MEGABYTE
+    return "$usedMb MB / ${formatCacheLimit(limitMb)}"
+}

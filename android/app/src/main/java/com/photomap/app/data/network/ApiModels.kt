@@ -148,6 +148,59 @@ data class AssetItemDto(
 )
 
 @JsonClass(generateAdapter = true)
+data class AssetChangesResponseDto(
+    val items: List<AssetChangeDto>,
+    val nextCursor: Long,
+    val hasMore: Boolean,
+    val serverCursor: Long,
+    val serverTime: String,
+)
+
+@JsonClass(generateAdapter = true)
+data class AssetChangeDto(
+    val changeId: Long,
+    val assetId: String,
+    val changeType: String,
+    val changedAt: String,
+    val asset: RemoteAssetDto?,
+)
+
+@JsonClass(generateAdapter = true)
+data class RemoteAssetDto(
+    val id: String,
+    val mediaType: String,
+    val mimeType: String,
+    val originalFilename: String?,
+    val fileSizeBytes: Long?,
+    val checksumSha256: String?,
+    val thumbnailKey: String?,
+    val previewKey: String?,
+    val posterFrameKey: String?,
+    val thumbnailUrl: String?,
+    val previewUrl: String?,
+    val posterFrameUrl: String?,
+    val signedUrlExpiresAt: Long? = null,
+    val takenAt: String?,
+    val width: Int?,
+    val height: Int?,
+    val durationMs: Long?,
+    val orientation: Int?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val country: String?,
+    val region: String?,
+    val city: String?,
+    val placeName: String?,
+    val cameraMake: String?,
+    val cameraModel: String?,
+    val isFavorite: Boolean,
+    val isArchived: Boolean,
+    val isTrashed: Boolean,
+    val uploadedAt: String?,
+    val updatedAt: String?,
+)
+
+@JsonClass(generateAdapter = true)
 data class AssetDetailDto(
     val id: String,
     val mediaType: String,
@@ -168,6 +221,21 @@ data class AssetDetailDto(
     val isFavorite: Boolean,
     val isArchived: Boolean,
     val isTrashed: Boolean,
+    val checksumSha256: String? = null,
+    val takenAtSource: String? = null,
+    val timezoneOffsetMinutes: Int? = null,
+    val orientation: Int? = null,
+    val country: String? = null,
+    val region: String? = null,
+    val placeName: String? = null,
+    val cameraMake: String? = null,
+    val cameraModel: String? = null,
+    val software: String? = null,
+    val isHidden: Boolean = false,
+    val trashedAt: String? = null,
+    val uploadedAt: String? = null,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

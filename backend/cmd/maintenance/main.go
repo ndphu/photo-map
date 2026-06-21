@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -20,17 +21,9 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	if len(os.Args) < 2 || os.Args[1] != "cleanup-upload-sessions" {
-		fmt.Fprintln(os.Stderr, "usage: go run ./cmd/maintenance cleanup-upload-sessions [--dry-run] [--older-than=24h] [--limit=100]")
-		os.Exit(2)
-	}
-
-	flags := flag.NewFlagSet("cleanup-upload-sessions", flag.ExitOnError)
-	dryRun := flags.Bool("dry-run", false, "list objects without deleting them")
-	olderThan := flags.Duration("older-than", 24*time.Hour, "minimum time since session expiry")
-	limit := flags.Int("limit", 100, "maximum sessions to scan")
-	if err := flags.Parse(os.Args[2:]); err != nil {
-		logger.Error("failed to parse flags", slog.Any("error", err))
+	slog.SetDefault(logger)
+	if len(os.Args) < 2 {
+		writeUsage()
 		os.Exit(2)
 	}
 
@@ -49,17 +42,69 @@ func main() {
 	}
 	defer pool.Close()
 
-	queries := sqlc.New(pool)
-	maintenanceService := service.NewMaintenanceService(pool, queries, storage.NewStorageService(cfg))
-	result, err := maintenanceService.CleanupExpiredUploadSessionsWithOptions(ctx, service.CleanupUploadSessionsParams{
-		DryRun: *dryRun, OlderThan: *olderThan, Limit: *limit,
-	})
+	maintenanceService := service.NewMaintenanceService(
+		pool,
+		sqlc.New(pool),
+		storage.NewStorageService(cfg),
+	)
+
+	var result any
+	switch os.Args[1] {
+	case "cleanup-upload-sessions":
+		result, err = runCleanup(ctx, maintenanceService, os.Args[2:])
+	case "backfill-asset-changes":
+		result, err = runAssetChangesBackfill(ctx, maintenanceService, os.Args[2:])
+	default:
+		writeUsage()
+		os.Exit(2)
+	}
 	if err != nil {
-		logger.Error("cleanup failed", slog.Any("error", err))
+		logger.Error("maintenance command failed", slog.String("command", os.Args[1]), slog.Any("error", err))
 		os.Exit(1)
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
 		logger.Error("failed to write result", slog.Any("error", err))
 		os.Exit(1)
 	}
+}
+
+func runCleanup(
+	ctx context.Context,
+	maintenanceService *service.MaintenanceService,
+	args []string,
+) (any, error) {
+	flags := flag.NewFlagSet("cleanup-upload-sessions", flag.ContinueOnError)
+	dryRun := flags.Bool("dry-run", false, "list objects without deleting them")
+	olderThan := flags.Duration("older-than", 24*time.Hour, "minimum time since session expiry")
+	limit := flags.Int("limit", 100, "maximum sessions to scan")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	return maintenanceService.CleanupExpiredUploadSessionsWithOptions(ctx, service.CleanupUploadSessionsParams{
+		DryRun: *dryRun, OlderThan: *olderThan, Limit: *limit,
+	})
+}
+
+func runAssetChangesBackfill(
+	ctx context.Context,
+	maintenanceService *service.MaintenanceService,
+	args []string,
+) (any, error) {
+	flags := flag.NewFlagSet("backfill-asset-changes", flag.ContinueOnError)
+	dryRun := flags.Bool("dry-run", false, "report assets without inserting changes")
+	live := flags.Bool("live", false, "insert missing initial asset changes")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if *dryRun == *live {
+		return nil, errors.New("specify exactly one of --dry-run or --live")
+	}
+	return maintenanceService.BackfillAssetChanges(ctx, *dryRun)
+}
+
+func writeUsage() {
+	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance cleanup-upload-sessions [--dry-run] [--older-than=24h] [--limit=100]")
+	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance backfill-asset-changes --dry-run")
+	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance backfill-asset-changes --live")
 }

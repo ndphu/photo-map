@@ -356,11 +356,16 @@ func (q *Queries) RestoreAssetFromTrash(ctx context.Context, arg GetAssetByIDFor
 	return scanAsset(q.db.QueryRow(ctx, restoreAssetFromTrash, arg.ID, arg.UserID))
 }
 
-const deleteAssetByID = `DELETE FROM assets WHERE id = $1::uuid AND user_id = $2::uuid`
+const deleteAssetByID = `
+DELETE FROM assets
+WHERE id = $1::uuid AND user_id = $2::uuid
+RETURNING id::text
+`
 
-func (q *Queries) DeleteAssetByID(ctx context.Context, arg GetAssetByIDForUserParams) error {
-	_, err := q.db.Exec(ctx, deleteAssetByID, arg.ID, arg.UserID)
-	return err
+func (q *Queries) DeleteAssetByID(ctx context.Context, arg GetAssetByIDForUserParams) (string, error) {
+	var id string
+	err := q.db.QueryRow(ctx, deleteAssetByID, arg.ID, arg.UserID).Scan(&id)
+	return id, err
 }
 
 const createOrUpdateDeviceAsset = `

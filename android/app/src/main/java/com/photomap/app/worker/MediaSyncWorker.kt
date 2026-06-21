@@ -54,6 +54,7 @@ class MediaSyncWorker(
         val deviceId = container.tokenStore.deviceId() ?: return@withContext Result.failure()
         val userId = container.tokenStore.userId() ?: return@withContext Result.failure()
         if (container.tokenStore.accessToken() == null) return@withContext Result.failure()
+        if (container.syncSettingsStore.areUploadsPaused()) return@withContext Result.success()
 
         dao.resetInterruptedUploads()
         val uploadStatuses = listOf(SyncStatus.PENDING, SyncStatus.FAILED)
@@ -75,6 +76,9 @@ class MediaSyncWorker(
         var retryRequired = false
         var authenticationRequired = false
         while (true) {
+            if (container.syncSettingsStore.areUploadsPaused()) {
+                return@withContext Result.success()
+            }
             val pending = dao.readyForUpload(
                 uploadStatuses,
                 System.currentTimeMillis(),
@@ -455,7 +459,7 @@ class MediaSyncWorker(
 
     companion object {
         const val WORK_NAME = "media-sync"
-        private const val ASSETS_PER_BATCH = 64
+        private const val ASSETS_PER_BATCH = 128
         private const val NOTIFICATION_CHANNEL_ID = "media_uploads"
         private const val NOTIFICATION_ID = 1001
         private const val CREATE_STATUS_ALREADY_UPLOADED = "already_uploaded"

@@ -3,10 +3,18 @@ package com.photomap.app.ui.viewer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PhotoZoomMathTest {
+    @Test
+    fun oneFingerAtBaseScaleIsReservedForViewerPaging() {
+        assertFalse(shouldHandlePhotoTransform(scale = 1f, pointerCount = 1, transformGestureActive = false))
+        assertTrue(shouldHandlePhotoTransform(scale = 1f, pointerCount = 2, transformGestureActive = false))
+        assertTrue(shouldHandlePhotoTransform(scale = 2f, pointerCount = 1, transformGestureActive = false))
+    }
+
     private val container = Size(1000f, 600f)
 
     @Test

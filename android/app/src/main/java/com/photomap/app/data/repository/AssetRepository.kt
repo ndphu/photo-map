@@ -38,6 +38,7 @@ class RetrofitAssetRemoteDataSource(private val api: PhotoMapApi) : AssetRemoteD
 class AssetRepository(
     private val remoteDataSource: AssetRemoteDataSource,
     private val galleryInvalidator: GalleryInvalidator,
+    private val mutationQueue: AssetMutationQueue? = null,
 ) {
     suspend fun detail(id: String): AssetDetailDto = remoteDataSource.detail(id)
 
@@ -51,7 +52,12 @@ class AssetRepository(
         id: String,
         favorite: Boolean,
         invalidateGallery: Boolean = true,
-    ): AssetDetailDto = remoteDataSource.favorite(id, favorite).also {
+    ) {
+        if (mutationQueue != null) {
+            mutationQueue.setFavorite(id, favorite)
+        } else {
+            remoteDataSource.favorite(id, favorite)
+        }
         if (invalidateGallery) galleryInvalidator.invalidate()
     }
 
@@ -59,20 +65,39 @@ class AssetRepository(
         id: String,
         archived: Boolean,
         invalidateGallery: Boolean = true,
-    ): AssetDetailDto = remoteDataSource.archive(id, archived).also {
+    ) {
+        if (mutationQueue != null) {
+            mutationQueue.setArchived(id, archived)
+        } else {
+            remoteDataSource.archive(id, archived)
+        }
         if (invalidateGallery) galleryInvalidator.invalidate()
     }
 
-    suspend fun trash(id: String, invalidateGallery: Boolean = true): AssetDetailDto =
-        remoteDataSource.trash(id).also {
-            if (invalidateGallery) galleryInvalidator.invalidate()
+    suspend fun trash(id: String, invalidateGallery: Boolean = true) {
+        if (mutationQueue != null) {
+            mutationQueue.trash(id)
+        } else {
+            remoteDataSource.trash(id)
         }
+        if (invalidateGallery) galleryInvalidator.invalidate()
+    }
 
-    suspend fun restore(id: String): AssetDetailDto =
-        remoteDataSource.restore(id).also { galleryInvalidator.invalidate() }
+    suspend fun restore(id: String) {
+        if (mutationQueue != null) {
+            mutationQueue.restore(id)
+        } else {
+            remoteDataSource.restore(id)
+        }
+        galleryInvalidator.invalidate()
+    }
 
     suspend fun delete(id: String) {
-        remoteDataSource.delete(id)
+        if (mutationQueue != null) {
+            mutationQueue.hardDelete(id)
+        } else {
+            remoteDataSource.delete(id)
+        }
         galleryInvalidator.invalidate()
     }
 

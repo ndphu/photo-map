@@ -2,7 +2,9 @@ package com.photomap.app.ui.viewer
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,9 +30,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.photomap.app.data.cache.CloudImageVariant
+import com.photomap.app.data.cache.cloudImageRequest
 
 @Composable
 fun ZoomablePhotoViewer(
@@ -43,6 +48,7 @@ fun ZoomablePhotoViewer(
     onImageLoaded: () -> Unit,
     onRetry: () -> Unit,
 ) {
+    val context = LocalContext.current
     val currentContentKey = "$assetKey:${imageUrl.hashCode()}"
     var previousContentKey by remember(assetKey) { mutableStateOf(currentContentKey) }
     var scale by rememberSaveable(assetKey) { mutableFloatStateOf(MIN_PHOTO_SCALE) }
@@ -76,16 +82,34 @@ fun ZoomablePhotoViewer(
             .background(Color.Black)
             .onSizeChanged { containerSize = Size(it.width.toFloat(), it.height.toFloat()) }
             .pointerInput(assetKey, imageUrl, containerSize) {
-                detectTransformGestures(panZoomLock = true) { _, pan, zoom, _ ->
-                    val next = applyPhotoGesture(
-                        transform = PhotoTransform(scale, Offset(offsetX, offsetY)),
-                        zoomChange = zoom,
-                        panChange = pan,
-                        containerSize = containerSize,
-                    )
-                    scale = next.scale
-                    offsetX = next.offset.x
-                    offsetY = next.offset.y
+                awaitEachGesture {
+                    var transformGestureActive = false
+                    var pointersPressed = true
+                    while (pointersPressed) {
+                        val event = awaitPointerEvent()
+                        val pressedCount = event.changes.count { it.pressed }
+                        if (pressedCount >= 2) transformGestureActive = true
+                        val handlesGesture = shouldHandlePhotoTransform(
+                            scale = scale,
+                            pointerCount = pressedCount,
+                            transformGestureActive = transformGestureActive,
+                        )
+                        if (handlesGesture) {
+                            val next = applyPhotoGesture(
+                                transform = PhotoTransform(scale, Offset(offsetX, offsetY)),
+                                zoomChange = event.calculateZoom(),
+                                panChange = event.calculatePan(),
+                                containerSize = containerSize,
+                            )
+                            scale = next.scale
+                            offsetX = next.offset.x
+                            offsetY = next.offset.y
+                            event.changes.forEach { change ->
+                                if (change.pressed) change.consume()
+                            }
+                        }
+                        pointersPressed = event.changes.any { it.pressed }
+                    }
                 }
             }
             .pointerInput(assetKey, imageUrl, containerSize) {
@@ -103,7 +127,7 @@ fun ZoomablePhotoViewer(
             },
     ) {
         AsyncImage(
-            model = imageUrl,
+            model = cloudImageRequest(context, assetKey, CloudImageVariant.PREVIEW, imageUrl),
             contentDescription = contentDescription,
             contentScale = ContentScale.Fit,
             onLoading = {
@@ -146,3 +170,9 @@ fun ZoomablePhotoViewer(
         }
     }
 }
+
+internal fun shouldHandlePhotoTransform(
+    scale: Float,
+    pointerCount: Int,
+    transformGestureActive: Boolean,
+): Boolean = transformGestureActive || pointerCount >= 2 || scale > MIN_PHOTO_SCALE

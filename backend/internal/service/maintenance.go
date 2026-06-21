@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ const (
 	auditCleanupDryRun  = "upload_session_cleanup_dry_run"
 	auditCleanupDeleted = "upload_session_cleanup_deleted"
 	auditCleanupError   = "upload_session_cleanup_error"
+	backfillLogInterval = 100
 )
 
 type MaintenanceService struct {
@@ -50,6 +52,104 @@ func (service *MaintenanceService) CleanupExpiredUploadSessions(
 	return service.CleanupExpiredUploadSessionsWithOptions(ctx, CleanupUploadSessionsParams{
 		DryRun: dryRun, OlderThan: olderThan, Limit: defaultCleanupLimit,
 	})
+}
+
+func (service *MaintenanceService) BackfillAssetChanges(
+	ctx context.Context,
+	dryRun bool,
+) (model.BackfillAssetChangesResult, error) {
+	startedAt := time.Now()
+	result := model.BackfillAssetChangesResult{DryRun: dryRun}
+	slog.InfoContext(ctx, "asset changes backfill started", slog.Bool("dry_run", dryRun))
+	if dryRun {
+		count, err := service.queries.CountAssetsWithoutChanges(ctx)
+		if err != nil {
+			slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "count_candidates"), slog.Any("error", err))
+			return result, err
+		}
+		result.Candidates = count
+		slog.InfoContext(
+			ctx,
+			"asset changes backfill dry run completed",
+			slog.Int64("candidates", count),
+			slog.Duration("duration", time.Since(startedAt)),
+		)
+		return result, nil
+	}
+
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "begin_transaction"), slog.Any("error", err))
+		return result, err
+	}
+	defer tx.Rollback(ctx)
+	queries := service.queries.WithTx(tx)
+	slog.InfoContext(ctx, "asset changes backfill waiting for advisory lock")
+	if _, err := queries.AcquireAssetChangesBackfillLock(ctx); err != nil {
+		slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "acquire_lock"), slog.Any("error", err))
+		return result, err
+	}
+	slog.InfoContext(ctx, "asset changes backfill advisory lock acquired")
+
+	assets, err := queries.ListAssetsWithoutChanges(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "list_candidates"), slog.Any("error", err))
+		return result, err
+	}
+	result.Candidates = int64(len(assets))
+	slog.InfoContext(ctx, "asset changes backfill candidates loaded", slog.Int("candidates", len(assets)))
+	for index, asset := range assets {
+		snapshot, err := marshalAssetSnapshot(asset)
+		if err != nil {
+			slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "build_snapshot"), slog.Int("processed", index), slog.Any("error", err))
+			return result, err
+		}
+		if _, err := queries.InsertInitialAssetChangeIfMissing(
+			ctx,
+			sqlc.InsertInitialAssetChangeIfMissingParams{
+				UserID: asset.UserID, AssetID: asset.ID, AssetSnapshot: snapshot,
+			},
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				logBackfillProgress(ctx, index+1, len(assets), result.Inserted)
+				continue
+			}
+			slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "insert_change"), slog.Int("processed", index), slog.Any("error", err))
+			return result, err
+		}
+		result.Inserted++
+		logBackfillProgress(ctx, index+1, len(assets), result.Inserted)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.ErrorContext(ctx, "asset changes backfill failed", slog.String("stage", "commit"), slog.Any("error", err))
+		return result, err
+	}
+	slog.InfoContext(
+		ctx,
+		"asset changes backfill completed",
+		slog.Int64("candidates", result.Candidates),
+		slog.Int64("inserted", result.Inserted),
+		slog.Duration("duration", time.Since(startedAt)),
+	)
+	return result, nil
+}
+
+func logBackfillProgress(
+	ctx context.Context,
+	processed int,
+	total int,
+	inserted int64,
+) {
+	if processed%backfillLogInterval != 0 && processed != total {
+		return
+	}
+	slog.InfoContext(
+		ctx,
+		"asset changes backfill progress",
+		slog.Int("processed", processed),
+		slog.Int("total", total),
+		slog.Int64("inserted", inserted),
+	)
 }
 
 func (service *MaintenanceService) CleanupExpiredUploadSessionsWithOptions(

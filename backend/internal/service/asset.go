@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"photo-map-app/backend/internal/config"
 	"photo-map-app/backend/internal/db/sqlc"
@@ -26,6 +27,7 @@ const (
 )
 
 type AssetService struct {
+	pool           *pgxpool.Pool
 	queries        *sqlc.Queries
 	storageService *storage.StorageService
 	readExpires    time.Duration
@@ -60,8 +62,14 @@ type searchCursor struct {
 	Offset int `json:"offset"`
 }
 
-func NewAssetService(queries *sqlc.Queries, storageService *storage.StorageService, cfg config.Config) *AssetService {
+func NewAssetService(
+	pool *pgxpool.Pool,
+	queries *sqlc.Queries,
+	storageService *storage.StorageService,
+	cfg config.Config,
+) *AssetService {
 	return &AssetService{
+		pool:           pool,
 		queries:        queries,
 		storageService: storageService,
 		readExpires:    time.Duration(cfg.R2PresignedReadExpiresSeconds) * time.Second,
@@ -189,35 +197,31 @@ func (service *AssetService) ReadURL(ctx context.Context, userID string, assetID
 }
 
 func (service *AssetService) UpdateFavorite(ctx context.Context, userID string, assetID string, isFavorite bool) (model.AssetDetail, error) {
-	asset, err := service.queries.UpdateAssetFavorite(ctx, sqlc.UpdateAssetFavoriteParams{ID: assetID, UserID: userID, IsFavorite: isFavorite})
-	if err != nil {
-		return model.AssetDetail{}, mapNoRows(err)
-	}
-	return mapAssetDetail(asset), nil
+	return service.mutateAssetWithChange(ctx, assetChangeUpsert, func(queries *sqlc.Queries) (sqlc.Asset, error) {
+		return queries.UpdateAssetFavorite(ctx, sqlc.UpdateAssetFavoriteParams{
+			ID: assetID, UserID: userID, IsFavorite: isFavorite,
+		})
+	})
 }
 
 func (service *AssetService) UpdateArchive(ctx context.Context, userID string, assetID string, isArchived bool) (model.AssetDetail, error) {
-	asset, err := service.queries.UpdateAssetArchive(ctx, sqlc.UpdateAssetArchiveParams{ID: assetID, UserID: userID, IsArchived: isArchived})
-	if err != nil {
-		return model.AssetDetail{}, mapNoRows(err)
-	}
-	return mapAssetDetail(asset), nil
+	return service.mutateAssetWithChange(ctx, assetChangeUpsert, func(queries *sqlc.Queries) (sqlc.Asset, error) {
+		return queries.UpdateAssetArchive(ctx, sqlc.UpdateAssetArchiveParams{
+			ID: assetID, UserID: userID, IsArchived: isArchived,
+		})
+	})
 }
 
 func (service *AssetService) Trash(ctx context.Context, userID string, assetID string) (model.AssetDetail, error) {
-	asset, err := service.queries.MoveAssetToTrash(ctx, sqlc.GetAssetByIDForUserParams{ID: assetID, UserID: userID})
-	if err != nil {
-		return model.AssetDetail{}, mapNoRows(err)
-	}
-	return mapAssetDetail(asset), nil
+	return service.mutateAssetWithChange(ctx, assetChangeTrash, func(queries *sqlc.Queries) (sqlc.Asset, error) {
+		return queries.MoveAssetToTrash(ctx, sqlc.GetAssetByIDForUserParams{ID: assetID, UserID: userID})
+	})
 }
 
 func (service *AssetService) Restore(ctx context.Context, userID string, assetID string) (model.AssetDetail, error) {
-	asset, err := service.queries.RestoreAssetFromTrash(ctx, sqlc.GetAssetByIDForUserParams{ID: assetID, UserID: userID})
-	if err != nil {
-		return model.AssetDetail{}, mapNoRows(err)
-	}
-	return mapAssetDetail(asset), nil
+	return service.mutateAssetWithChange(ctx, assetChangeRestore, func(queries *sqlc.Queries) (sqlc.Asset, error) {
+		return queries.RestoreAssetFromTrash(ctx, sqlc.GetAssetByIDForUserParams{ID: assetID, UserID: userID})
+	})
 }
 
 func (service *AssetService) Delete(ctx context.Context, userID string, assetID string) error {
@@ -231,7 +235,48 @@ func (service *AssetService) Delete(ctx context.Context, userID string, assetID 
 		return err
 	}
 
-	return service.queries.DeleteAssetByID(ctx, sqlc.GetAssetByIDForUserParams{ID: assetID, UserID: userID})
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	queries := service.queries.WithTx(tx)
+	deletedAssetID, err := queries.DeleteAssetByID(ctx, sqlc.GetAssetByIDForUserParams{
+		ID: assetID, UserID: userID,
+	})
+	if err != nil {
+		return mapNoRows(err)
+	}
+	if _, err := insertAssetDeleteChange(ctx, queries, userID, deletedAssetID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (service *AssetService) mutateAssetWithChange(
+	ctx context.Context,
+	changeType string,
+	mutate func(*sqlc.Queries) (sqlc.Asset, error),
+) (model.AssetDetail, error) {
+	tx, err := service.pool.Begin(ctx)
+	if err != nil {
+		return model.AssetDetail{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	queries := service.queries.WithTx(tx)
+	asset, err := mutate(queries)
+	if err != nil {
+		return model.AssetDetail{}, mapNoRows(err)
+	}
+	if _, err := insertAssetChange(ctx, queries, asset, changeType); err != nil {
+		return model.AssetDetail{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.AssetDetail{}, err
+	}
+	return mapAssetDetail(asset), nil
 }
 
 func (service *AssetService) getAsset(ctx context.Context, userID string, assetID string) (sqlc.Asset, error) {
@@ -279,27 +324,40 @@ func (service *AssetService) mapListItem(ctx context.Context, asset sqlc.Asset) 
 
 func mapAssetDetail(asset sqlc.Asset) model.AssetDetail {
 	return model.AssetDetail{
-		ID:             asset.ID,
-		MediaType:      asset.MediaType,
-		MimeType:       asset.MimeType,
-		ObjectKey:      asset.ObjectKey,
-		ThumbnailKey:   asset.ThumbnailKey,
-		PreviewKey:     asset.PreviewKey,
-		PosterFrameKey: asset.PosterFrameKey,
-		OriginalName:   asset.OriginalFilename,
-		FileSizeBytes:  asset.FileSizeBytes,
-		TakenAt:        asset.TakenAt,
-		Width:          asset.Width,
-		Height:         asset.Height,
-		DurationMs:     asset.DurationMs,
-		Latitude:       asset.Latitude,
-		Longitude:      asset.Longitude,
-		City:           asset.City,
-		IsFavorite:     boolValue(asset.IsFavorite),
-		IsArchived:     boolValue(asset.IsArchived),
-		IsTrashed:      boolValue(asset.IsTrashed),
-		CreatedAt:      asset.CreatedAt,
-		UpdatedAt:      asset.UpdatedAt,
+		ID:                    asset.ID,
+		MediaType:             asset.MediaType,
+		MimeType:              asset.MimeType,
+		ObjectKey:             asset.ObjectKey,
+		ThumbnailKey:          asset.ThumbnailKey,
+		PreviewKey:            asset.PreviewKey,
+		PosterFrameKey:        asset.PosterFrameKey,
+		OriginalName:          asset.OriginalFilename,
+		FileSizeBytes:         asset.FileSizeBytes,
+		ChecksumSha256:        asset.ChecksumSha256,
+		TakenAt:               asset.TakenAt,
+		TakenAtSource:         asset.TakenAtSource,
+		TimezoneOffsetMinutes: asset.TimezoneOffsetMinutes,
+		Width:                 asset.Width,
+		Height:                asset.Height,
+		Orientation:           asset.Orientation,
+		DurationMs:            asset.DurationMs,
+		Latitude:              asset.Latitude,
+		Longitude:             asset.Longitude,
+		Country:               asset.Country,
+		Region:                asset.Region,
+		City:                  asset.City,
+		PlaceName:             asset.PlaceName,
+		CameraMake:            asset.CameraMake,
+		CameraModel:           asset.CameraModel,
+		Software:              asset.Software,
+		IsFavorite:            boolValue(asset.IsFavorite),
+		IsArchived:            boolValue(asset.IsArchived),
+		IsHidden:              boolValue(asset.IsHidden),
+		IsTrashed:             boolValue(asset.IsTrashed),
+		TrashedAt:             asset.TrashedAt,
+		UploadedAt:            asset.UploadedAt,
+		CreatedAt:             asset.CreatedAt,
+		UpdatedAt:             asset.UpdatedAt,
 	}
 }
 

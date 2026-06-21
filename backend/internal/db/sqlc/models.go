@@ -110,6 +110,15 @@ type Asset struct {
 	UpdatedAt             time.Time
 }
 
+type AssetChange struct {
+	ChangeID      int64
+	UserID        string
+	AssetID       string
+	ChangeType    string
+	AssetSnapshot []byte
+	ChangedAt     time.Time
+}
+
 type Album struct {
 	ID           string
 	UserID       string

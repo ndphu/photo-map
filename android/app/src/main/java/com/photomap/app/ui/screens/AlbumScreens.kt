@@ -44,8 +44,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import com.photomap.app.data.cache.cloudImageRequest
+import com.photomap.app.data.cache.cloudImageVariant
 import com.photomap.app.data.gallery.AssetUiModel
 import com.photomap.app.data.network.AlbumDto
 import com.photomap.app.ui.AlbumDetailUiState
@@ -168,7 +171,7 @@ private fun AlbumMenu(album: AlbumDto, onEdit: (AlbumDto) -> Unit, onDelete: (Al
 fun AlbumDetailScreen(
     state: AlbumDetailUiState,
     onBack: () -> Unit,
-    onAsset: (String) -> Unit,
+    onAsset: (AssetUiModel) -> Unit,
     onRemove: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
@@ -207,20 +210,26 @@ fun AlbumDetailScreen(
 }
 
 @Composable
-private fun AlbumAssetTile(asset: AssetUiModel, onAsset: (String) -> Unit, onRemove: (String) -> Unit) {
+private fun AlbumAssetTile(asset: AssetUiModel, onAsset: (AssetUiModel) -> Unit, onRemove: (String) -> Unit) {
+    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     Box(
         Modifier
             .fillMaxWidth()
             .aspectRatio(asset.aspectRatio.coerceIn(0.65f, 1.8f))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable { onAsset(asset.id) },
+            .clickable { onAsset(asset) },
     ) {
         if (asset.thumbnailUrl == null) {
             Icon(Icons.Outlined.BrokenImage, contentDescription = null, modifier = Modifier.align(Alignment.Center))
         } else {
             AsyncImage(
-                model = asset.thumbnailUrl,
+                model = cloudImageRequest(
+                    context,
+                    asset.id,
+                    cloudImageVariant(asset.galleryImageVariant),
+                    requireNotNull(asset.thumbnailUrl),
+                ),
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,

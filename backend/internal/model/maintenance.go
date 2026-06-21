@@ -13,3 +13,9 @@ type CleanupError struct {
 	ObjectKey *string `json:"objectKey,omitempty"`
 	Message   string  `json:"message"`
 }
+
+type BackfillAssetChangesResult struct {
+	DryRun     bool  `json:"dryRun"`
+	Candidates int64 `json:"candidates"`
+	Inserted   int64 `json:"inserted"`
+}

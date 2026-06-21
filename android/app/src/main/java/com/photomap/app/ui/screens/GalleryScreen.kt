@@ -4,6 +4,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -61,24 +63,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
 import com.photomap.app.data.gallery.AssetUiModel
+import com.photomap.app.data.cache.cloudImageRequest
+import com.photomap.app.data.cache.cloudImageVariant
 import com.photomap.app.data.gallery.GalleryFilter
+import com.photomap.app.data.gallery.GalleryGridZoomAction
 import com.photomap.app.data.gallery.GalleryListItem
 import com.photomap.app.data.gallery.GalleryMediaType
 import com.photomap.app.data.gallery.GalleryQuickFilter
 import com.photomap.app.data.gallery.GallerySection
+import com.photomap.app.data.gallery.galleryGridZoomAction
 import com.photomap.app.data.gallery.quickFilter
 import com.photomap.app.data.gallery.section
 import com.photomap.app.data.network.NetworkState
+import com.photomap.app.data.preferences.MAX_GALLERY_COLUMNS
+import com.photomap.app.data.preferences.MIN_GALLERY_COLUMNS
 import com.photomap.app.ui.GalleryInteractionState
 import com.photomap.app.ui.GallerySyncSummary
 import com.photomap.app.ui.GalleryUiState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
@@ -86,8 +97,12 @@ import kotlinx.coroutines.launch
 fun GalleryScreen(
     assets: LazyPagingItems<GalleryListItem>,
     state: GalleryUiState,
-    onAssetTap: (String) -> Unit,
+    columnCount: Int,
+    onIncreaseColumns: () -> Unit,
+    onDecreaseColumns: () -> Unit,
+    onAssetTap: (AssetUiModel) -> Unit,
     onAssetLongPress: (String) -> Unit,
+    onThumbnailError: (String, String, String, Throwable) -> Unit,
     onCloseSelection: () -> Unit,
     onFavoriteSelected: () -> Unit,
     onArchiveSelected: () -> Unit,
@@ -108,16 +123,45 @@ fun GalleryScreen(
     onQuickFilter: (GalleryQuickFilter) -> Unit,
     onSection: (GallerySection) -> Unit,
 ) {
-    val refreshState = assets.loadState.refresh
-    val isRefreshing = refreshState is LoadState.Loading && assets.itemCount > 0
+    val isRefreshing = state.metadataSync.isSyncing && assets.itemCount > 0
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    var previousFilter by remember { mutableStateOf(state.filter) }
+    var pendingGridRestore by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var densityFeedback by remember { mutableStateOf<String?>(null) }
     val showJumpToTop by remember {
         derivedStateOf { gridState.firstVisibleItemIndex > JUMP_TO_TOP_THRESHOLD }
     }
 
     LaunchedEffect(state.filter) {
-        gridState.scrollToItem(0)
+        if (previousFilter != state.filter) {
+            gridState.scrollToItem(0)
+            previousFilter = state.filter
+        }
+    }
+
+    LaunchedEffect(columnCount) {
+        pendingGridRestore?.let { (index, offset) ->
+            gridState.scrollToItem(index, offset)
+            pendingGridRestore = null
+            densityFeedback = "$columnCount per row"
+            delay(DENSITY_FEEDBACK_DURATION_MILLIS)
+            densityFeedback = null
+        }
+    }
+
+    val onGridZoom: (GalleryGridZoomAction) -> Unit = { action ->
+        val canChange = when (action) {
+            GalleryGridZoomAction.DECREASE_COLUMNS -> columnCount > MIN_GALLERY_COLUMNS
+            GalleryGridZoomAction.INCREASE_COLUMNS -> columnCount < MAX_GALLERY_COLUMNS
+        }
+        if (canChange) {
+            pendingGridRestore = gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
+            when (action) {
+                GalleryGridZoomAction.DECREASE_COLUMNS -> onDecreaseColumns()
+                GalleryGridZoomAction.INCREASE_COLUMNS -> onIncreaseColumns()
+            }
+        }
     }
 
     Scaffold(
@@ -160,20 +204,44 @@ fun GalleryScreen(
                 if (state.networkState == NetworkState.OFFLINE) OfflineBanner()
                 SyncStatusBanner(state.sync, onStartSync, onRetryFailedUploads)
                 BatchStatusBanner(state.interaction, onRetryBatch, onDismissResult)
+                if (state.metadataSync.errorMessage != null && assets.itemCount > 0) {
+                    MetadataSyncErrorBanner(state.metadataSync.errorMessage, onRetry)
+                }
                 QuickFilters(state.filter.quickFilter(), onQuickFilter)
                 GalleryContent(
                     assets = assets,
                     gridState = gridState,
+                    columnCount = columnCount,
                     filter = state.filter,
                     networkState = state.networkState,
                     selectedIds = state.interaction.selectedIds,
+                    metadataSyncing = state.metadataSync.isSyncing,
+                    metadataError = state.metadataSync.errorMessage,
                     onAssetTap = onAssetTap,
                     onAssetLongPress = onAssetLongPress,
+                    onThumbnailError = onThumbnailError,
                     onRetry = onRetry,
                     onStartSync = onStartSync,
                     onClearFilter = onClearFilter,
+                    onGridZoom = onGridZoom,
                     modifier = Modifier.weight(1f),
                 )
+            }
+            densityFeedback?.let { message ->
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 12.dp),
+                    color = MaterialTheme.colorScheme.inverseSurface,
+                    contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    shadowElevation = 3.dp,
+                ) {
+                    Text(
+                        text = message,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
             }
         }
     }
@@ -332,28 +400,33 @@ private fun BatchStatusBanner(
 private fun GalleryContent(
     assets: LazyPagingItems<GalleryListItem>,
     gridState: LazyGridState,
+    columnCount: Int,
     filter: GalleryFilter,
     networkState: NetworkState,
     selectedIds: Set<String>,
-    onAssetTap: (String) -> Unit,
+    metadataSyncing: Boolean,
+    metadataError: String?,
+    onAssetTap: (AssetUiModel) -> Unit,
     onAssetLongPress: (String) -> Unit,
+    onThumbnailError: (String, String, String, Throwable) -> Unit,
     onRetry: () -> Unit,
     onStartSync: () -> Unit,
     onClearFilter: () -> Unit,
+    onGridZoom: (GalleryGridZoomAction) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val refreshState = assets.loadState.refresh
     when {
-        refreshState is LoadState.Loading && assets.itemCount == 0 -> Box(
+        metadataSyncing && assets.itemCount == 0 -> Box(
             modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
         ) {
             CircularProgressIndicator()
         }
 
-        refreshState is LoadState.Error && assets.itemCount == 0 -> FullScreenMessage(
+        metadataError != null && assets.itemCount == 0 -> FullScreenMessage(
             title = if (networkState == NetworkState.OFFLINE) "You're offline" else "Unable to load gallery",
-            message = safeErrorMessage(refreshState.error),
+            message = metadataError,
             actionLabel = "Retry",
             onAction = onRetry,
             modifier = modifier,
@@ -377,12 +450,29 @@ private fun GalleryContent(
         else -> GalleryGrid(
             assets = assets,
             gridState = gridState,
+            columnCount = columnCount,
             selectedIds = selectedIds,
             onAssetTap = onAssetTap,
             onAssetLongPress = onAssetLongPress,
+            onThumbnailError = onThumbnailError,
             onRetry = onRetry,
+            onGridZoom = onGridZoom,
             modifier = modifier,
         )
+    }
+}
+
+@Composable
+private fun MetadataSyncErrorBanner(message: String, onRetry: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(message, color = MaterialTheme.colorScheme.onErrorContainer)
+            TextButton(onClick = onRetry) { Text("Retry") }
+        }
     }
 }
 
@@ -391,16 +481,19 @@ private fun GalleryContent(
 private fun GalleryGrid(
     assets: LazyPagingItems<GalleryListItem>,
     gridState: LazyGridState,
+    columnCount: Int,
     selectedIds: Set<String>,
-    onAssetTap: (String) -> Unit,
+    onAssetTap: (AssetUiModel) -> Unit,
     onAssetLongPress: (String) -> Unit,
+    onThumbnailError: (String, String, String, Throwable) -> Unit,
     onRetry: () -> Unit,
+    onGridZoom: (GalleryGridZoomAction) -> Unit,
     modifier: Modifier,
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(112.dp),
+        columns = GridCells.Fixed(columnCount),
         state = gridState,
-        modifier = modifier,
+        modifier = modifier.galleryPinchResize(onGridZoom),
         horizontalArrangement = Arrangement.spacedBy(2.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -417,6 +510,7 @@ private fun GalleryGrid(
                     selected = item.value.id in selectedIds,
                     onTap = onAssetTap,
                     onLongPress = onAssetLongPress,
+                    onThumbnailError = onThumbnailError,
                 )
                 is GalleryListItem.DateHeader -> Text(
                     text = item.label,
@@ -444,6 +538,30 @@ private fun GalleryGrid(
                 }
             }
             is LoadState.NotLoading -> Unit
+        }
+    }
+}
+
+private fun Modifier.galleryPinchResize(
+    onZoomAction: (GalleryGridZoomAction) -> Unit,
+): Modifier = pointerInput(onZoomAction) {
+    awaitEachGesture {
+        var accumulatedZoom = 1f
+        var pointersPressed = true
+        while (pointersPressed) {
+            val event = awaitPointerEvent()
+            val pressedPointers = event.changes.count { it.pressed }
+            if (pressedPointers >= 2) {
+                accumulatedZoom *= event.calculateZoom()
+                event.changes.forEach { change ->
+                    if (change.pressed) change.consume()
+                }
+                galleryGridZoomAction(accumulatedZoom)?.let { action ->
+                    onZoomAction(action)
+                    accumulatedZoom = 1f
+                }
+            }
+            pointersPressed = event.changes.any { it.pressed }
         }
     }
 }
@@ -494,9 +612,11 @@ private fun SectionMenu(current: GallerySection, onSection: (GallerySection) -> 
 private fun GalleryTile(
     asset: AssetUiModel,
     selected: Boolean,
-    onTap: (String) -> Unit,
+    onTap: (AssetUiModel) -> Unit,
     onLongPress: (String) -> Unit,
+    onThumbnailError: (String, String, String, Throwable) -> Unit,
 ) {
+    val context = LocalContext.current
     val selectionColor = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
     Box(
         modifier = Modifier
@@ -505,15 +625,29 @@ private fun GalleryTile(
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .border(SELECTION_BORDER_WIDTH, selectionColor)
             .combinedClickable(
-                onClick = { onTap(asset.id) },
+                onClick = { onTap(asset) },
                 onLongClick = { onLongPress(asset.id) },
             ),
     ) {
-        if (asset.thumbnailUrl != null) {
+        val imageUrl = asset.thumbnailUrl
+        if (imageUrl != null) {
             AsyncImage(
-                model = asset.thumbnailUrl,
+                model = cloudImageRequest(
+                    context,
+                    asset.id,
+                    cloudImageVariant(asset.galleryImageVariant),
+                    imageUrl,
+                ),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onError = { state ->
+                    onThumbnailError(
+                        asset.id,
+                        asset.galleryImageVariant,
+                        imageUrl,
+                        state.result.throwable,
+                    )
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         } else {
@@ -683,6 +817,7 @@ private val GallerySection.icon
     }
 
 private const val JUMP_TO_TOP_THRESHOLD = 12
+private const val DENSITY_FEEDBACK_DURATION_MILLIS = 1_000L
 private val SELECTION_BORDER_WIDTH = 3.dp
 private const val MIN_ASPECT_RATIO = 0.65f
 private const val MAX_ASPECT_RATIO = 1.8f

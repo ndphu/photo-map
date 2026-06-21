@@ -25,6 +25,7 @@
 | PATCH | `/upload-sessions/{id}/status` | Yes | Session status |
 | POST | `/upload-sessions/{id}/complete` | Yes | Asset ID |
 | GET | `/assets` | Yes | Cursor-paginated timeline |
+| GET | `/assets/changes` | Yes | Ordered asset metadata changes |
 | GET | `/assets/{id}` | Yes | Asset detail |
 | GET | `/assets/{id}/read-url` | Yes | Signed GET URL |
 | PATCH | `/assets/{id}/favorite` | Yes | Updated asset |
@@ -35,6 +36,10 @@
 | GET | `/search` | Yes | Search result page |
 | POST/GET/PATCH/DELETE | `/albums...` | Yes | Album operations |
 | POST | `/maintenance/upload-sessions/cleanup` | Admin | Cleanup result |
+
+`GET /assets/{id}` returns richer metadata for the authenticated user's detail view. Optional fields include `checksumSha256`, `takenAtSource`, `timezoneOffsetMinutes`, `orientation`, `country`, `region`, `placeName`, `cameraMake`, `cameraModel`, `software`, `isHidden`, `trashedAt`, `uploadedAt`, `createdAt`, and `updatedAt`.
+
+List and search responses remain lightweight. Signed URLs, presigned URLs, and storage credentials are not exposed as display metadata.
 
 ## Authentication
 
@@ -186,6 +191,45 @@ Sort: `taken_at DESC NULLS LAST, id DESC`. Cursor là base64url JSON `{ "takenAt
 - `POST /assets/{id}/trash`
 - `POST /assets/{id}/restore`
 - `DELETE /assets/{id}` xóa R2 trước, sau đó mới xóa DB.
+
+### `GET /assets/changes`
+
+Query parameters:
+
+- `cursor`: last processed numeric `changeId`, default `0`.
+- `limit`: default `500`, maximum `1000`.
+
+Changes are scoped to the authenticated user and returned in ascending
+`changeId` order. A delete is represented by a tombstone with `asset: null`.
+
+```json
+{
+  "items": [
+    {
+      "changeId": 42,
+      "assetId": "uuid",
+      "changeType": "upsert",
+      "changedAt": "2026-06-19T10:00:00Z",
+      "asset": {
+        "id": "uuid",
+        "mediaType": "image",
+        "thumbnailKey": "users/.../thumbs/...webp",
+        "thumbnailUrl": "https://...",
+        "isFavorite": false,
+        "isArchived": false,
+        "isTrashed": false
+      }
+    }
+  ],
+  "nextCursor": 42,
+  "serverCursor": 42,
+  "hasMore": false,
+  "serverTime": "2026-06-19T10:00:01Z"
+}
+```
+
+Clients must persist `nextCursor` only after applying all returned items. Signed
+read URLs are generated per response and must not be treated as durable metadata.
 
 ## Search
 

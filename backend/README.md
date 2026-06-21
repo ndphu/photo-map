@@ -81,3 +81,25 @@ go run ./cmd/maintenance cleanup-upload-sessions --dry-run --older-than=24h --li
 ```
 
 Remove `--dry-run` to delete unreferenced R2 objects and mark their sessions expired. The same operation is available at `POST /maintenance/upload-sessions/cleanup` for authenticated users listed in `ADMIN_EMAILS`.
+
+### Asset metadata replication
+
+Authenticated clients can consume ordered metadata changes with:
+
+```text
+GET /assets/changes?cursor=0&limit=500
+```
+
+The cursor is the last processed `changeId`. Results are ordered ascending and
+include `upsert`, `trash`, `restore`, and `delete` changes. Read URLs in snapshots
+are generated when the response is requested; they are not stored in PostgreSQL.
+
+Backfill existing assets before enabling replication for an existing database:
+
+```bash
+go run ./cmd/maintenance backfill-asset-changes --dry-run
+go run ./cmd/maintenance backfill-asset-changes --live
+```
+
+The live command is idempotent and inserts an initial `upsert` only for assets
+that do not already have a change record.

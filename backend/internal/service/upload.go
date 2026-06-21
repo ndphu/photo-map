@@ -449,6 +449,9 @@ func completeUploadWithAsset(
 	}); err != nil {
 		return model.CompleteUploadResponse{}, err
 	}
+	if _, err := insertAssetChange(ctx, queries, asset, assetChangeUpsert); err != nil {
+		return model.CompleteUploadResponse{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return model.CompleteUploadResponse{}, err

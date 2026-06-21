@@ -59,6 +59,7 @@ data class AssetUiModel(
     val height: Int?,
     val durationMs: Long?,
     val isFavorite: Boolean,
+    val galleryImageVariant: String = SignedUrlVariant.THUMBNAIL.apiValue,
 ) {
     val isVideo: Boolean get() = mediaType == GalleryMediaType.VIDEO.apiValue
 

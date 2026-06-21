@@ -31,11 +31,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.paging.LoadState
 import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
+import com.photomap.app.data.cache.cloudImageRequest
+import com.photomap.app.data.cache.cloudImageVariant
 import com.photomap.app.data.gallery.AssetUiModel
 import com.photomap.app.ui.SearchUiState
 
@@ -47,7 +50,7 @@ fun SearchScreen(
     onBack: () -> Unit,
     onQueryChange: (String) -> Unit,
     onClear: () -> Unit,
-    onAsset: (String) -> Unit,
+    onAsset: (AssetUiModel) -> Unit,
     onRetry: () -> Unit,
 ) {
     Scaffold(
@@ -93,7 +96,7 @@ fun SearchScreen(
 private fun SearchResults(
     state: SearchUiState,
     assets: LazyPagingItems<AssetUiModel>,
-    onAsset: (String) -> Unit,
+    onAsset: (AssetUiModel) -> Unit,
     onRetry: () -> Unit,
     modifier: Modifier,
 ) {
@@ -144,19 +147,25 @@ private fun SearchResults(
 }
 
 @Composable
-private fun SearchTile(asset: AssetUiModel, onAsset: (String) -> Unit) {
+private fun SearchTile(asset: AssetUiModel, onAsset: (AssetUiModel) -> Unit) {
+    val context = LocalContext.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .aspectRatio(asset.aspectRatio.coerceIn(0.65f, 1.8f))
             .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable { onAsset(asset.id) },
+            .clickable { onAsset(asset) },
     ) {
         if (asset.thumbnailUrl == null) {
             Icon(Icons.Outlined.BrokenImage, contentDescription = null, modifier = Modifier.align(Alignment.Center))
         } else {
             AsyncImage(
-                model = asset.thumbnailUrl,
+                model = cloudImageRequest(
+                    context,
+                    asset.id,
+                    cloudImageVariant(asset.galleryImageVariant),
+                    requireNotNull(asset.thumbnailUrl),
+                ),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

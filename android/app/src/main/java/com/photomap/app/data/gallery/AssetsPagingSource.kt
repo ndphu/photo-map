@@ -82,4 +82,5 @@ fun AssetItemDto.toUiModel() = AssetUiModel(
     height = height,
     durationMs = durationMs,
     isFavorite = isFavorite,
+    galleryImageVariant = if (thumbnailUrl != null) SignedUrlVariant.THUMBNAIL.apiValue else SignedUrlVariant.PREVIEW.apiValue,
 )

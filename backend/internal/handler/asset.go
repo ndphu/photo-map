@@ -54,6 +54,34 @@ func (handler *AssetHandler) List(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, response)
 }
 
+func (handler *AssetHandler) ListChanges(ctx *gin.Context) {
+	userID, ok := authenticatedUserID(ctx)
+	if !ok {
+		return
+	}
+
+	cursor, err := parseChangeCursor(ctx.Query("cursor"))
+	if err != nil {
+		util.WriteError(ctx, http.StatusBadRequest, "invalid_cursor", "cursor must be a non-negative integer")
+		return
+	}
+	limit, ok := parseLimit(ctx)
+	if !ok {
+		return
+	}
+
+	response, err := handler.assetService.ListChanges(ctx.Request.Context(), service.ListAssetChangesParams{
+		UserID: userID,
+		Cursor: cursor,
+		Limit:  limit,
+	})
+	if err != nil {
+		writeAssetError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, response)
+}
+
 func (handler *AssetHandler) Search(ctx *gin.Context) {
 	userID, ok := authenticatedUserID(ctx)
 	if !ok {
@@ -264,6 +292,18 @@ func parseLimit(ctx *gin.Context) (int, bool) {
 	}
 
 	return limit, true
+}
+
+func parseChangeCursor(value string) (int64, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	cursor, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || cursor < 0 {
+		return 0, service.ErrInvalidCursor
+	}
+	return cursor, nil
 }
 
 func optionalQuery(ctx *gin.Context, key string) *string {

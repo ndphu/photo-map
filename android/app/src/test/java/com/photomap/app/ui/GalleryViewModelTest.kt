@@ -2,6 +2,8 @@ package com.photomap.app.ui
 
 import androidx.paging.PagingData
 import com.photomap.app.data.gallery.AssetUiModel
+import com.photomap.app.data.gallery.AssetMetadataSyncStatus
+import com.photomap.app.data.gallery.AssetMetadataSyncer
 import com.photomap.app.data.gallery.GalleryFilter
 import com.photomap.app.data.gallery.GalleryBatchAction
 import com.photomap.app.data.gallery.GalleryBatchActions
@@ -9,10 +11,12 @@ import com.photomap.app.data.gallery.GalleryBatchResult
 import com.photomap.app.data.gallery.GalleryMediaType
 import com.photomap.app.data.gallery.GalleryPager
 import com.photomap.app.data.gallery.GalleryQuickFilter
+import com.photomap.app.data.gallery.SignedUrlVariant
 import com.photomap.app.data.network.NetworkMonitor
 import com.photomap.app.data.network.NetworkState
 import com.photomap.app.data.network.AlbumDto
 import com.photomap.app.data.repository.GallerySyncController
+import com.photomap.app.data.preferences.GalleryColumnPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -60,6 +64,34 @@ class GalleryViewModelTest {
     }
 
     @Test
+    fun galleryColumnCountStaysWithinBounds() = runTest(dispatcher) {
+        val preferences = FakeGalleryColumnPreferences(6)
+        val viewModel = galleryViewModel(columnPreferences = preferences)
+
+        viewModel.increaseGalleryColumns()
+        assertEquals(6, viewModel.galleryColumnCount.value)
+
+        repeat(10) { viewModel.decreaseGalleryColumns() }
+        assertEquals(2, viewModel.galleryColumnCount.value)
+    }
+
+    @Test
+    fun galleryColumnChangeDoesNotChangeFilterOrRebuildPager() = runTest(dispatcher) {
+        val pager = RecordingGalleryPager()
+        val preferences = FakeGalleryColumnPreferences(3)
+        val viewModel = galleryViewModel(pager = pager, columnPreferences = preferences)
+        backgroundScope.launch { viewModel.pagingData.collect() }
+        advanceUntilIdle()
+
+        viewModel.increaseGalleryColumns()
+        viewModel.decreaseGalleryColumns()
+        advanceUntilIdle()
+
+        assertEquals(GalleryFilter(), viewModel.currentFilter.value)
+        assertEquals(1, pager.filters.size)
+    }
+
+    @Test
     fun quickFiltersMapToBackendFilters() = runTest(dispatcher) {
         val viewModel = galleryViewModel()
 
@@ -92,16 +124,15 @@ class GalleryViewModelTest {
     }
 
     @Test
-    fun refreshEmitsPagingRefreshCommand() = runTest(dispatcher) {
-        val viewModel = galleryViewModel()
-        val commands = mutableListOf<GalleryCommand>()
-        backgroundScope.launch { viewModel.commands.collect { commands += it } }
+    fun refreshRunsForcedMetadataSyncWithoutPagingCommand() = runTest(dispatcher) {
+        val metadataSyncer = FakeAssetMetadataSyncer()
+        val viewModel = galleryViewModel(metadataSyncer = metadataSyncer)
         advanceUntilIdle()
 
         viewModel.refresh()
         advanceUntilIdle()
 
-        assertEquals(listOf(GalleryCommand.REFRESH), commands)
+        assertEquals(listOf(false, true), metadataSyncer.forceCalls)
     }
 
     @Test
@@ -183,10 +214,9 @@ class GalleryViewModelTest {
     @Test
     fun syncCountsAreExposedAndUploadCompletionRefreshesGallery() = runTest(dispatcher) {
         val sync = FakeGallerySyncController()
-        val viewModel = galleryViewModel(syncController = sync)
-        val commands = mutableListOf<GalleryCommand>()
+        val metadataSyncer = FakeAssetMetadataSyncer()
+        val viewModel = galleryViewModel(syncController = sync, metadataSyncer = metadataSyncer)
         backgroundScope.launch { viewModel.uiState.collect() }
-        backgroundScope.launch { viewModel.commands.collect { commands += it } }
         advanceUntilIdle()
 
         sync.pendingCount.value = 3
@@ -196,7 +226,7 @@ class GalleryViewModelTest {
         advanceUntilIdle()
 
         assertEquals(GallerySyncSummary(pending = 3, uploading = 2, failed = 1, uploaded = 4), viewModel.uiState.value.sync)
-        assertEquals(listOf(GalleryCommand.REFRESH), commands)
+        assertEquals(listOf(false, true), metadataSyncer.forceCalls)
     }
 
     private fun galleryViewModel(
@@ -204,7 +234,43 @@ class GalleryViewModelTest {
         networkMonitor: NetworkMonitor = FakeNetworkMonitor(),
         batchActions: GalleryBatchActions = FakeGalleryBatchActions(),
         syncController: GallerySyncController = FakeGallerySyncController(),
-    ) = GalleryViewModel(pager, networkMonitor, batchActions, syncController)
+        metadataSyncer: AssetMetadataSyncer = FakeAssetMetadataSyncer(),
+        columnPreferences: GalleryColumnPreferences = FakeGalleryColumnPreferences(),
+    ) = GalleryViewModel(
+        pager,
+        networkMonitor,
+        batchActions,
+        syncController,
+        metadataSyncer,
+        columnPreferences,
+    )
+}
+
+private class FakeGalleryColumnPreferences(initialValue: Int = 3) : GalleryColumnPreferences {
+    private val mutableColumnCount = MutableStateFlow(initialValue)
+    override val columnCount: StateFlow<Int> = mutableColumnCount
+
+    override fun setColumnCount(value: Int) {
+        mutableColumnCount.value = value.coerceIn(2, 6)
+    }
+}
+
+private class FakeAssetMetadataSyncer : AssetMetadataSyncer {
+    override val metadataSyncStatus = MutableStateFlow(AssetMetadataSyncStatus())
+    val forceCalls = mutableListOf<Boolean>()
+
+    override suspend fun syncAssetMetadata(force: Boolean): Result<Unit> {
+        forceCalls += force
+        return Result.success(Unit)
+    }
+
+    override suspend fun clearRemoteReplica() = Unit
+
+    override suspend fun refreshSignedUrl(
+        assetId: String,
+        variant: SignedUrlVariant,
+        failedUrl: String?,
+    ): Result<Unit> = Result.success(Unit)
 }
 
 private class RecordingGalleryPager : GalleryPager {

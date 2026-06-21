@@ -233,8 +233,67 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
   is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
 
--- name: DeleteAssetByID :exec
-DELETE FROM assets WHERE id = $1::uuid AND user_id = $2::uuid;
+-- name: DeleteAssetByID :one
+DELETE FROM assets
+WHERE id = $1::uuid AND user_id = $2::uuid
+RETURNING id::text;
+
+-- name: InsertAssetChange :one
+INSERT INTO asset_changes (user_id, asset_id, change_type, asset_snapshot)
+VALUES ($1::uuid, $2::uuid, $3, $4::jsonb)
+RETURNING change_id, user_id::text, asset_id::text, change_type,
+  asset_snapshot, changed_at;
+
+-- name: ListAssetChangesAfterCursor :many
+SELECT change_id, user_id::text, asset_id::text, change_type,
+  asset_snapshot, changed_at
+FROM asset_changes
+WHERE user_id = $1::uuid
+  AND change_id > $2
+ORDER BY change_id ASC
+LIMIT $3;
+
+-- name: GetLatestAssetChangeIDForUser :one
+SELECT COALESCE(MAX(change_id), 0)::bigint
+FROM asset_changes
+WHERE user_id = $1::uuid;
+
+-- name: CountAssetsWithoutChanges :one
+SELECT COUNT(*)::bigint
+FROM assets a
+WHERE NOT EXISTS (
+  SELECT 1 FROM asset_changes ac WHERE ac.asset_id = a.id
+);
+
+-- name: ListAssetsWithoutChanges :many
+SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key,
+  a.thumbnail_key, a.preview_key, a.poster_frame_key, a.media_type, a.mime_type,
+  a.original_filename, a.file_size_bytes, a.checksum_sha256, a.perceptual_hash,
+  a.taken_at, a.taken_at_source, a.timezone_offset_minutes, a.width, a.height,
+  a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region,
+  a.city, a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash,
+  a.dominant_color, a.is_favorite, a.is_archived, a.is_hidden, a.is_trashed,
+  a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+FROM assets a
+WHERE NOT EXISTS (
+  SELECT 1 FROM asset_changes ac WHERE ac.asset_id = a.id
+)
+ORDER BY a.user_id, a.id;
+
+-- name: InsertInitialAssetChangeIfMissing :one
+INSERT INTO asset_changes (user_id, asset_id, change_type, asset_snapshot)
+SELECT a.user_id, a.id, 'upsert', $3::jsonb
+FROM assets a
+WHERE a.user_id = $1::uuid
+  AND a.id = $2::uuid
+  AND NOT EXISTS (
+  SELECT 1 FROM asset_changes WHERE asset_id = $2::uuid
+)
+RETURNING change_id;
+
+-- name: AcquireAssetChangesBackfillLock :one
+SELECT true AS locked
+FROM (SELECT pg_advisory_xact_lock(hashtext('asset_changes_backfill'))) AS lock;
 
 -- name: CreateOrUpdateDeviceAsset :exec
 INSERT INTO device_assets (

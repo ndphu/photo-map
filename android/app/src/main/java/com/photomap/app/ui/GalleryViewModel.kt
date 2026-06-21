@@ -8,6 +8,8 @@ import androidx.paging.cachedIn
 import androidx.paging.insertSeparators
 import androidx.paging.map
 import com.photomap.app.data.gallery.AssetUiModel
+import com.photomap.app.data.gallery.AssetMetadataSyncStatus
+import com.photomap.app.data.gallery.AssetMetadataSyncer
 import com.photomap.app.data.gallery.GalleryBatchAction
 import com.photomap.app.data.gallery.GalleryBatchActions
 import com.photomap.app.data.gallery.GalleryFilter
@@ -16,20 +18,22 @@ import com.photomap.app.data.gallery.GalleryMediaType
 import com.photomap.app.data.gallery.GalleryPager
 import com.photomap.app.data.gallery.GalleryQuickFilter
 import com.photomap.app.data.gallery.GallerySection
+import com.photomap.app.data.gallery.SignedUrlVariant
+import com.photomap.app.data.gallery.isExpiredSignedUrlError
 import com.photomap.app.data.gallery.timelineGroupKey
 import com.photomap.app.data.gallery.timelineHeaderLabel
 import com.photomap.app.data.network.AlbumDto
 import com.photomap.app.data.network.NetworkMonitor
 import com.photomap.app.data.network.NetworkState
+import com.photomap.app.data.preferences.DEFAULT_GALLERY_COLUMNS
+import com.photomap.app.data.preferences.GalleryColumnPreferences
 import com.photomap.app.data.repository.GallerySyncController
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -70,12 +74,8 @@ data class GalleryUiState(
     val networkState: NetworkState = NetworkState.UNKNOWN,
     val interaction: GalleryInteractionState = GalleryInteractionState(),
     val sync: GallerySyncSummary = GallerySyncSummary(),
+    val metadataSync: AssetMetadataSyncStatus = AssetMetadataSyncStatus(),
 )
-
-enum class GalleryCommand {
-    REFRESH,
-    RETRY,
-}
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GalleryViewModel(
@@ -83,16 +83,16 @@ class GalleryViewModel(
     networkMonitor: NetworkMonitor,
     private val batchActions: GalleryBatchActions,
     private val syncController: GallerySyncController,
+    private val metadataSyncer: AssetMetadataSyncer = NoOpAssetMetadataSyncer,
+    private val columnPreferences: GalleryColumnPreferences = NoOpGalleryColumnPreferences,
 ) : ViewModel() {
     private val _currentFilter = MutableStateFlow(GalleryFilter())
     val currentFilter: StateFlow<GalleryFilter> = _currentFilter.asStateFlow()
 
     private val _interaction = MutableStateFlow(GalleryInteractionState())
     val interactionState: StateFlow<GalleryInteractionState> = _interaction.asStateFlow()
+    val galleryColumnCount: StateFlow<Int> = columnPreferences.columnCount
     private var retryAction: GalleryBatchAction? = null
-
-    private val _commands = MutableSharedFlow<GalleryCommand>(extraBufferCapacity = 1)
-    val commands = _commands.asSharedFlow()
 
     val networkState: StateFlow<NetworkState> = networkMonitor.state.stateIn(
         scope = viewModelScope,
@@ -118,8 +118,9 @@ class GalleryViewModel(
         networkState,
         _interaction,
         syncSummary,
-    ) { filter, network, interaction, sync ->
-        GalleryUiState(filter, network, interaction, sync)
+        metadataSyncer.metadataSyncStatus,
+    ) { filter, network, interaction, sync, metadataSync ->
+        GalleryUiState(filter, network, interaction, sync, metadataSync)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
@@ -148,6 +149,7 @@ class GalleryViewModel(
         .cachedIn(viewModelScope)
 
     init {
+        syncMetadata(force = false)
         syncController.uploadedCount
             .distinctUntilChanged()
             .drop(1)
@@ -156,11 +158,32 @@ class GalleryViewModel(
     }
 
     fun refresh() {
-        _commands.tryEmit(GalleryCommand.REFRESH)
+        syncMetadata(force = true)
     }
 
     fun retry() {
-        _commands.tryEmit(GalleryCommand.RETRY)
+        syncMetadata(force = true)
+    }
+
+    fun increaseGalleryColumns() {
+        columnPreferences.setColumnCount(galleryColumnCount.value + 1)
+    }
+
+    fun decreaseGalleryColumns() {
+        columnPreferences.setColumnCount(galleryColumnCount.value - 1)
+    }
+
+    fun onThumbnailLoadFailed(
+        assetId: String,
+        variantName: String,
+        failedUrl: String,
+        error: Throwable,
+    ) {
+        if (!isExpiredSignedUrlError(error)) return
+        val variant = SignedUrlVariant.entries.firstOrNull { it.apiValue == variantName } ?: return
+        viewModelScope.launch {
+            metadataSyncer.refreshSignedUrl(assetId, variant, failedUrl)
+        }
     }
 
     fun onAssetTap(assetId: String): Boolean {
@@ -280,13 +303,6 @@ class GalleryViewModel(
         )
     }
 
-    fun onAppForeground() {
-        val now = System.currentTimeMillis()
-        if (now - lastForegroundRefreshAt < FOREGROUND_REFRESH_GUARD_MILLIS) return
-        lastForegroundRefreshAt = now
-        refresh()
-    }
-
     private fun toggleSelection(assetId: String) {
         _interaction.update { state ->
             val selected = if (assetId in state.selectedIds) {
@@ -296,6 +312,10 @@ class GalleryViewModel(
             }
             state.copy(selectedIds = selected, resultMessage = null)
         }
+    }
+
+    private fun syncMetadata(force: Boolean) {
+        viewModelScope.launch { metadataSyncer.syncAssetMetadata(force) }
     }
 
     private fun executeBatch(action: GalleryBatchAction) {
@@ -328,6 +348,7 @@ class GalleryViewModel(
                         )
                     }
                 }
+                syncMetadata(force = false)
                 if (result.failedIds.isEmpty()) {
                     retryAction = null
                     _interaction.update {
@@ -362,11 +383,6 @@ class GalleryViewModel(
         }
     }
 
-    private var lastForegroundRefreshAt = 0L
-
-    private companion object {
-        const val FOREGROUND_REFRESH_GUARD_MILLIS = 2_000L
-    }
 }
 
 private val GalleryBatchAction.progressLabel: String
@@ -382,8 +398,38 @@ class GalleryViewModelFactory(
     private val networkMonitor: NetworkMonitor,
     private val batchActions: GalleryBatchActions,
     private val syncController: GallerySyncController,
+    private val metadataSyncer: AssetMetadataSyncer,
+    private val columnPreferences: GalleryColumnPreferences,
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-        GalleryViewModel(repository, networkMonitor, batchActions, syncController) as T
+        GalleryViewModel(
+            repository,
+            networkMonitor,
+            batchActions,
+            syncController,
+            metadataSyncer,
+            columnPreferences,
+        ) as T
+}
+
+private object NoOpGalleryColumnPreferences : GalleryColumnPreferences {
+    override val columnCount: StateFlow<Int> = MutableStateFlow(DEFAULT_GALLERY_COLUMNS)
+
+    override fun setColumnCount(value: Int) = Unit
+}
+
+private object NoOpAssetMetadataSyncer : AssetMetadataSyncer {
+    override val metadataSyncStatus: StateFlow<AssetMetadataSyncStatus> =
+        MutableStateFlow(AssetMetadataSyncStatus())
+
+    override suspend fun syncAssetMetadata(force: Boolean): Result<Unit> = Result.success(Unit)
+
+    override suspend fun clearRemoteReplica() = Unit
+
+    override suspend fun refreshSignedUrl(
+        assetId: String,
+        variant: SignedUrlVariant,
+        failedUrl: String?,
+    ): Result<Unit> = Result.success(Unit)
 }
