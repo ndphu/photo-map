@@ -59,6 +59,7 @@ go run ./cmd/api
 - `R2_PRESIGNED_READ_EXPIRES_SECONDS`
 - `PORT`
 - `ADMIN_EMAILS` (comma-separated emails allowed to call maintenance endpoints)
+- `CORS_ALLOWED_ORIGINS` (comma-separated exact web origins, for example `http://localhost:5173,https://gallery.example.com`)
 
 ## Endpoints
 

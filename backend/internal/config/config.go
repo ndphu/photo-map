@@ -29,6 +29,7 @@ type Config struct {
 	R2PresignedReadExpiresSeconds   int64
 	Port                            string
 	AdminEmails                     []string
+	CORSAllowedOrigins              []string
 }
 
 func Load() (Config, error) {
@@ -48,6 +49,7 @@ func Load() (Config, error) {
 		R2PresignedReadExpiresSeconds:   getInt64("R2_PRESIGNED_READ_EXPIRES_SECONDS", int64(defaultPresignedReadExpires.Seconds())),
 		Port:                            getString("PORT", defaultPort),
 		AdminEmails:                     getCSV("ADMIN_EMAILS"),
+		CORSAllowedOrigins:              getCSVPreserveCase("CORS_ALLOWED_ORIGINS"),
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -58,10 +60,18 @@ func Load() (Config, error) {
 }
 
 func getCSV(key string) []string {
+	values := getCSVPreserveCase(key)
+	for index := range values {
+		values[index] = strings.ToLower(values[index])
+	}
+	return values
+}
+
+func getCSVPreserveCase(key string) []string {
 	parts := strings.Split(os.Getenv(key), ",")
 	values := make([]string, 0, len(parts))
 	for _, part := range parts {
-		value := strings.ToLower(strings.TrimSpace(part))
+		value := strings.TrimSpace(part)
 		if value != "" {
 			values = append(values, value)
 		}

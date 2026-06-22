@@ -77,6 +77,7 @@ func main() {
 func buildRouter(logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) *gin.Engine {
 	router := gin.New()
 	router.HandleMethodNotAllowed = true
+	router.Use(appmiddleware.CORS(cfg.CORSAllowedOrigins))
 	router.Use(gin.CustomRecovery(func(ctx *gin.Context, recovered interface{}) {
 		logger.Error("panic recovered", slog.Any("panic", recovered))
 		util.WriteError(ctx, http.StatusInternalServerError, "internal_error", "internal server error")
