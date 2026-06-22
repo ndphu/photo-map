@@ -26,15 +26,20 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.photomap.app.ui.AuthUiState
+import com.photomap.app.data.preferences.BackendUrlConfiguration
 
 @Composable
 fun LoginScreen(
     state: AuthUiState,
+    backendConfiguration: BackendUrlConfiguration,
     onLogin: (String, String) -> Unit,
     onRegister: () -> Unit,
+    onConfigureBackend: (Boolean, String) -> Unit,
+    onClearBackendError: () -> Unit,
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var showBackendDialog by remember { mutableStateOf(false) }
 
     AuthForm(
         title = "Private gallery",
@@ -59,7 +64,10 @@ fun LoginScreen(
         )
         Button(
             onClick = { onLogin(email, password) },
-            enabled = !state.loading && email.isNotBlank() && password.isNotBlank(),
+            enabled = !state.loading &&
+                !state.switchingBackend &&
+                email.isNotBlank() &&
+                password.isNotBlank(),
             modifier = Modifier.fillMaxWidth(),
         ) {
             if (state.loading) {
@@ -74,18 +82,45 @@ fun LoginScreen(
         TextButton(onClick = onRegister, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("Create account")
         }
+        TextButton(
+            onClick = {
+                onClearBackendError()
+                showBackendDialog = true
+            },
+            enabled = !state.loading && !state.switchingBackend,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            Text("Server")
+        }
+    }
+
+    if (showBackendDialog) {
+        BackendServerDialog(
+            configuration = backendConfiguration,
+            saving = state.switchingBackend,
+            externalError = state.backendError,
+            onDismiss = { showBackendDialog = false },
+            onSave = { useCustomUrl, customBaseUrl ->
+                showBackendDialog = false
+                onConfigureBackend(useCustomUrl, customBaseUrl)
+            },
+        )
     }
 }
 
 @Composable
 fun RegisterScreen(
     state: AuthUiState,
+    backendConfiguration: BackendUrlConfiguration,
     onRegister: (String, String, String) -> Unit,
     onLogin: () -> Unit,
+    onConfigureBackend: (Boolean, String) -> Unit,
+    onClearBackendError: () -> Unit,
 ) {
     var displayName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var showBackendDialog by remember { mutableStateOf(false) }
 
     AuthForm(
         title = "Create account",
@@ -118,6 +153,7 @@ fun RegisterScreen(
         Button(
             onClick = { onRegister(email, password, displayName) },
             enabled = !state.loading &&
+                !state.switchingBackend &&
                 displayName.isNotBlank() &&
                 email.isNotBlank() &&
                 password.length >= 8,
@@ -128,6 +164,29 @@ fun RegisterScreen(
         TextButton(onClick = onLogin, modifier = Modifier.align(Alignment.CenterHorizontally)) {
             Text("Back to sign in")
         }
+        TextButton(
+            onClick = {
+                onClearBackendError()
+                showBackendDialog = true
+            },
+            enabled = !state.loading && !state.switchingBackend,
+            modifier = Modifier.align(Alignment.CenterHorizontally),
+        ) {
+            Text("Server")
+        }
+    }
+
+    if (showBackendDialog) {
+        BackendServerDialog(
+            configuration = backendConfiguration,
+            saving = state.switchingBackend,
+            externalError = state.backendError,
+            onDismiss = { showBackendDialog = false },
+            onSave = { useCustomUrl, customBaseUrl ->
+                showBackendDialog = false
+                onConfigureBackend(useCustomUrl, customBaseUrl)
+            },
+        )
     }
 }
 
@@ -154,6 +213,10 @@ private fun AuthForm(
         Spacer(Modifier.height(28.dp))
         Column(verticalArrangement = Arrangement.spacedBy(14.dp), content = content)
         state.error?.let {
+            Spacer(Modifier.height(12.dp))
+            Text(it, color = MaterialTheme.colorScheme.error)
+        }
+        state.backendError?.let {
             Spacer(Modifier.height(12.dp))
             Text(it, color = MaterialTheme.colorScheme.error)
         }

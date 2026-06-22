@@ -77,11 +77,75 @@ interface LocalAssetDao {
         """
         UPDATE local_assets
         SET syncStatus = :status, remoteAssetId = :remoteAssetId,
-            lastError = NULL, lastSyncedAt = :syncedAt, nextRetryAt = NULL
+            lastError = NULL, lastSyncedAt = :syncedAt, nextRetryAt = NULL,
+            metadataBackfillStatus = :metadataStatus,
+            metadataBackfilledAt = CASE WHEN :metadataStatus = 'completed' THEN :syncedAt ELSE NULL END,
+            metadataBackfillError = NULL
         WHERE localAssetId = :id
         """,
     )
-    suspend fun markUploaded(id: String, status: String, remoteAssetId: String, syncedAt: Long)
+    suspend fun markUploaded(
+        id: String,
+        status: String,
+        remoteAssetId: String,
+        syncedAt: Long,
+        metadataStatus: String,
+    )
+
+    @Query(
+        """
+        SELECT * FROM local_assets
+        WHERE syncStatus = 'uploaded'
+          AND remoteAssetId IS NOT NULL
+          AND metadataBackfillStatus = 'pending'
+        ORDER BY takenAt ASC, localAssetId ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun metadataBackfillCandidates(limit: Int): List<LocalAssetEntity>
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET metadataBackfillStatus = :status,
+            metadataBackfilledAt = :completedAt,
+            metadataBackfillError = NULL
+        WHERE localAssetId = :id
+        """,
+    )
+    suspend fun markMetadataBackfillCompleted(
+        id: String,
+        completedAt: Long,
+        status: String = MetadataBackfillStatus.COMPLETED,
+    )
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET metadataBackfillStatus = :status, metadataBackfillError = :error
+        WHERE localAssetId = :id
+        """,
+    )
+    suspend fun markMetadataBackfillIssue(id: String, status: String, error: String)
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET metadataBackfillStatus = :pending, metadataBackfillError = NULL
+        WHERE metadataBackfillStatus IN (:failed, :skipped)
+        """,
+    )
+    suspend fun retryMetadataBackfill(
+        pending: String = MetadataBackfillStatus.PENDING,
+        failed: String = MetadataBackfillStatus.FAILED,
+        skipped: String = MetadataBackfillStatus.SKIPPED,
+    )
+
+    @Query("SELECT COUNT(*) FROM local_assets WHERE metadataBackfillStatus = :status AND syncStatus = 'uploaded'")
+    fun countMetadataBackfillStatus(status: String): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM local_assets WHERE metadataBackfillStatus = 'pending' AND syncStatus = 'uploaded'")
+    suspend fun countPendingMetadataBackfillOnce(): Int
 
     @Query(
         """
@@ -111,6 +175,23 @@ interface LocalAssetDao {
         uploading: String = SyncStatus.UPLOADING,
         pending: String = SyncStatus.PENDING,
     )
+
+    @Query(
+        """
+        UPDATE local_assets
+        SET syncStatus = :pending,
+            remoteAssetId = NULL,
+            lastError = NULL,
+            lastSyncedAt = NULL,
+            uploadSessionId = NULL,
+            uploadAttemptCount = 0,
+            nextRetryAt = NULL,
+            metadataBackfillStatus = 'pending',
+            metadataBackfilledAt = NULL,
+            metadataBackfillError = NULL
+        """,
+    )
+    suspend fun resetForBackendChange(pending: String = SyncStatus.PENDING)
 
     @Query("SELECT COUNT(*) FROM local_assets WHERE syncStatus = :status")
     fun countByStatus(status: String): Flow<Int>

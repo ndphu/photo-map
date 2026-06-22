@@ -13,6 +13,7 @@ class PhotoMapApplication : Application(), SingletonImageLoader.Factory {
         val isLoggedIn = container.authRepository.isLoggedIn()
         container.syncRepository.restoreBackgroundSync(isLoggedIn)
         container.offlineImageCacheCoordinator.restore(isLoggedIn)
+        container.assetMetadataBackfillCoordinator.restore(isLoggedIn)
         if (isLoggedIn) container.assetMutationQueue.enqueueWork()
     }
 

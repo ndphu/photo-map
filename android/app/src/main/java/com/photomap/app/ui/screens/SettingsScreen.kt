@@ -1,5 +1,9 @@
 package com.photomap.app.ui.screens
 
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,8 +44,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.photomap.app.data.cache.OfflineImageCacheStatus
+import com.photomap.app.data.preferences.BackendUrlConfiguration
+import com.photomap.app.data.repository.AssetMetadataBackfillState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -60,6 +67,12 @@ fun SettingsScreen(
     imageCacheLimitMb: Int,
     imageCacheLimitPresetsMb: List<Int>,
     imageCacheStatus: OfflineImageCacheStatus,
+    backendConfiguration: BackendUrlConfiguration,
+    backendSaving: Boolean,
+    backendError: String?,
+    metadataBackfillState: AssetMetadataBackfillState,
+    metadataBackfillPendingCount: Int,
+    metadataBackfillFailedCount: Int,
     onBack: () -> Unit,
     onSync: () -> Unit,
     onRetry: () -> Unit,
@@ -72,11 +85,21 @@ fun SettingsScreen(
     onImageCacheLimitChange: (Int) -> Unit,
     onDownloadOfflineImages: () -> Unit,
     onClearOfflineImageCache: () -> Unit,
+    onRetryMetadataBackfill: () -> Unit,
+    onMetadataPermissionGranted: () -> Unit,
+    onConfigureBackend: (Boolean, String) -> Unit,
+    onClearBackendError: () -> Unit,
     onLogout: () -> Unit,
 ) {
     var cacheLimitMenuExpanded by remember { mutableStateOf(false) }
     var parallelUploadsMenuExpanded by remember { mutableStateOf(false) }
     var showClearCacheConfirmation by remember { mutableStateOf(false) }
+    var showBackendDialog by remember { mutableStateOf(false) }
+    val metadataPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) onMetadataPermissionGranted()
+    }
 
     Scaffold(
         topBar = {
@@ -96,6 +119,22 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
+            SettingsSectionTitle("Backend")
+            BackendUrlRow(
+                url = backendConfiguration.effectiveBaseUrl,
+                onClick = {
+                    onClearBackendError()
+                    showBackendDialog = true
+                },
+            )
+            backendError?.let { error ->
+                Text(
+                    text = error,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                )
+            }
+
             SettingsSectionTitle("Cloud backup")
             SettingSwitchRow("Background sync", backgroundSyncEnabled, onBackgroundSyncChange)
             SettingsDivider()
@@ -180,6 +219,31 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsSectionTitle("Photo metadata")
+            SyncCountRow("Pending", metadataBackfillPendingCount)
+            SettingsDivider()
+            SyncCountRow("Failed", metadataBackfillFailedCount, error = metadataBackfillFailedCount > 0)
+            MetadataBackfillProgress(metadataBackfillState)
+            SettingsActionArea {
+                Button(
+                    onClick = {
+                        if (metadataBackfillState.needsPermission && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            metadataPermissionLauncher.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+                        } else {
+                            onRetryMetadataBackfill()
+                        }
+                    },
+                    enabled = !metadataBackfillState.running,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Outlined.CloudSync, contentDescription = null)
+                    Text(
+                        if (metadataBackfillState.needsPermission) "Allow location metadata" else "Retry metadata update",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+            }
+
             SettingsSectionTitle("Account")
             SettingsActionArea(bottomPadding = 32.dp) {
                 OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) {
@@ -208,6 +272,36 @@ fun SettingsScreen(
             },
         )
     }
+
+    if (showBackendDialog) {
+        BackendServerDialog(
+            configuration = backendConfiguration,
+            saving = backendSaving,
+            externalError = backendError,
+            onDismiss = { showBackendDialog = false },
+            onSave = { useCustomUrl, customBaseUrl ->
+                showBackendDialog = false
+                onConfigureBackend(useCustomUrl, customBaseUrl)
+            },
+        )
+    }
+}
+
+@Composable
+private fun BackendUrlRow(url: String, onClick: () -> Unit) {
+    ListItem(
+        headlineContent = { Text("Server") },
+        supportingContent = {
+            Text(
+                text = url,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        trailingContent = {
+            TextButton(onClick = onClick) { Text("Change") }
+        },
+    )
 }
 
 @Composable
@@ -348,6 +442,28 @@ private fun CacheProgress(status: OfflineImageCacheStatus) {
         status.errorMessage?.let { message ->
             Text(message, color = MaterialTheme.colorScheme.error)
         }
+    }
+}
+
+@Composable
+private fun MetadataBackfillProgress(state: AssetMetadataBackfillState) {
+    if (!state.running && state.errorMessage == null && !state.needsPermission) return
+    Column(
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (state.running) {
+            val total = state.total.coerceAtLeast(1)
+            LinearProgressIndicator(
+                progress = { state.completed.toFloat() / total },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text("${state.completed} of ${state.total} updated", style = MaterialTheme.typography.bodySmall)
+        }
+        if (state.needsPermission) {
+            Text("Location metadata permission is required for backfill.", style = MaterialTheme.typography.bodySmall)
+        }
+        state.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     }
 }
 

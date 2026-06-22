@@ -18,10 +18,11 @@ Room table `local_assets` lưu:
 ## Scheduling
 
 - Manual sync: scan MediaStore rồi enqueue unique work `media-sync`.
-- Background sync: periodic worker `periodic-media-scan`, chu kỳ 1 giờ, best-effort.
+- Background sync mặc định tắt. Khi bật, periodic worker `periodic-media-scan` chạy mỗi 1 giờ theo best-effort.
 - Upload work là unique work nên không có hai queue chạy chồng nhau.
 - `wifiOnly=true` dùng `NetworkType.UNMETERED`; nếu tắt dùng `CONNECTED`.
 - WorkManager exponential backoff bắt đầu từ 30 giây.
+- `Pause uploads` hủy `media-sync` và chặn enqueue mới; periodic scan vẫn có thể cập nhật Room. Resume enqueue worker mới ngay.
 - Logout hủy cả upload work và periodic work.
 
 ## Upload flow
@@ -46,7 +47,7 @@ flowchart TD
     CMP --> DONE
 ```
 
-Mỗi worker đọc `maxParallelUploads` khi bắt đầu. Tối đa 1-16 asset được xử lý đồng thời; các variant trong một asset được upload tuần tự. Original luôn được stream từ MediaStore, không ghi file tạm.
+Mỗi worker đọc `maxParallelUploads` khi bắt đầu. Giá trị mặc định là 8, các preset hợp lệ là 8/16/32/64/128 và batch tối đa là 128 asset. Các variant trong một asset được upload tuần tự. Original luôn được stream từ MediaStore, không ghi file tạm.
 
 ## Metadata
 
@@ -65,6 +66,16 @@ Scanner/extractor đọc MediaStore ID, filename, MIME type, size, timestamps, d
 
 Chỉ các response `completed`, `already_uploaded`, `duplicate_found` hoặc complete thành công mới được phép chuyển Room sang `uploaded`.
 
+### Existing asset metadata backfill
+
+- Android requests optional `ACCESS_MEDIA_LOCATION`; gallery access remains usable when it is denied.
+- Android 10+ reads image EXIF through `MediaStore.setRequireOriginal`. Video date/location comes from `MediaMetadataRetriever`.
+- Unique foreground work `asset-metadata-backfill` processes uploaded local rows that have a `remoteAssetId` and pending backfill state.
+- Each item sends only `PUT /assets/{id}/metadata`. It never creates an upload session or uploads media to R2.
+- Completed rows are not scanned again. Missing local media and missing cloud assets are marked skipped; network/server failures remain retryable.
+- After successful updates, `/assets/changes` reconciles `remote_assets`, including GPS, EXIF source, timezone and software.
+- Settings displays permission, progress, pending/failed counts and a retry action. Logout or backend switching cancels the worker.
+
 ## Foreground execution
 
 Upload worker chạy foreground với notification channel `media_uploads`, hiển thị số file đã xử lý. Manifest khai báo `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_DATA_SYNC` và service type `dataSync`. Android 13+ có `POST_NOTIFICATIONS`; từ chối quyền notification không làm thay đổi tính đúng đắn của sync.
@@ -77,7 +88,7 @@ Cloud gallery metadata uses a separate local replica:
 - `remote_sync_state` stores the last committed `asset_changes.change_id` cursor under id `asset_metadata`.
 - Gallery observes `remote_assets` through Room. Retrofit responses are applied transactionally and are never rendered directly.
 - Each change-feed page applies upsert/trash/restore/delete operations and advances the cursor in the same Room transaction.
-- A failed refresh preserves cached rows and shows a non-blocking error. Logout clears only the remote replica and sync state, not `local_assets`.
+- A failed refresh preserves cached rows and shows a non-blocking error. Normal logout clears remote replica/sync state but preserves `local_assets`.
 - `GET /assets` pagination is no longer the source for the main gallery; cloud replication uses `GET /assets/changes` exclusively.
 
 ## Cloud metadata mutation queue
@@ -126,11 +137,13 @@ Cloud gallery metadata uses a separate local replica:
 ## Single photo viewer
 
 - Gallery/search/album grids use `thumbnailUrl`; the photo detail viewer requests `variant=preview` from the backend.
-- The viewer never constructs an R2 URL and never stores a signed read URL in Room, preferences, or saved instance state.
+- The viewer never constructs an R2 URL. Temporary signed thumbnail/preview/poster URLs may live in `remote_assets`; credentials and original URL are never persisted.
 - Pinch zoom is clamped from 1x to 5x. Double tap toggles approximately 2.5x and reset; pan offsets are clamped to the scaled container.
 - Zoom survives ordinary recomposition and resets when the asset or intentionally refreshed image URL changes.
 - A failed Coil load shows an explicit retry action. Retry requests a fresh signed URL instead of modifying URL query parameters.
-- `variant=original` is available through the repository but is not loaded by default to avoid unnecessary memory pressure.
+- Preview remains the default. `Load original` fetches `variant=original` into an asset-scoped temporary cache file and renders it with the subsampling full-resolution viewer.
+- `Download original` uses the system `CreateDocument` picker and streams to the selected URI. Original files are excluded from Coil/offline cache, and temporary viewer files are removed on swipe, back, cancellation, or startup cleanup.
+- Original transfer retries one time with a fresh signed URL after HTTP 403 and preserves the preview while loading or failing.
 - Video detail remains separate from the zoomable photo viewer and currently shows a preview with a playback-unavailable state.
 - Photo and video viewers expose a Details action that opens a metadata bottom sheet without reloading an already cached detail response.
 - The panel formats file, date, resolution, duration, location, camera, cloud, and status metadata while hiding missing optional rows.
@@ -153,3 +166,11 @@ Cloud gallery metadata uses a separate local replica:
 - A two-finger pinch changes the number of columns. One-finger scrolling, tap, long press, and pull-to-refresh keep their existing behavior.
 - Changing grid density preserves the approximate visible item and does not rebuild Paging, change filters, or trigger backend synchronization.
 - The preference is device-local and has no effect on upload, metadata replication, or backend APIs.
+
+## Backend server configuration
+
+- `BuildConfig.API_BASE_URL` is the default endpoint. Login, Register, and Settings expose the same Default/Custom server dialog.
+- `BackendUrlStore` persists the selected mode and custom root URL. Retrofit keeps the build URL but an OkHttp interceptor rewrites scheme/host/port per request, so UI and WorkManager switch without process restart.
+- HTTPS accepts a valid root URL. HTTP is limited to localhost, loopback, `10/8`, `172.16/12`, and `192.168/16`; credentials, path prefixes, query, and fragment are rejected.
+- When the effective server changes, the app cancels all workers, clears JWT/device ID, remote replica, change cursor, pending metadata operations and image cache, then resets every `local_assets` upload mapping to `pending` before saving the new endpoint.
+- Switching Default/Custom without changing the normalized effective URL does not logout or clear local state.

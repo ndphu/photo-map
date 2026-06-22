@@ -23,6 +23,9 @@ data class LocalAssetEntity(
     val uploadSessionId: String? = null,
     val uploadAttemptCount: Int = 0,
     val nextRetryAt: Long? = null,
+    val metadataBackfillStatus: String = MetadataBackfillStatus.PENDING,
+    val metadataBackfilledAt: Long? = null,
+    val metadataBackfillError: String? = null,
 )
 
 object SyncStatus {
@@ -31,4 +34,11 @@ object SyncStatus {
     const val UPLOADED = "uploaded"
     const val FAILED = "failed"
     const val SKIPPED = "skipped"
+}
+
+object MetadataBackfillStatus {
+    const val PENDING = "pending"
+    const val COMPLETED = "completed"
+    const val SKIPPED = "skipped"
+    const val FAILED = "failed"
 }

@@ -58,11 +58,16 @@ fun PhotoMapApp(container: AppContainer) {
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Routes.LOGIN) {
             val viewModel: AuthViewModel = viewModel(
-                factory = AuthViewModelFactory(container.authRepository),
+                factory = AuthViewModelFactory(
+                    container.authRepository,
+                    container.backendServerManager,
+                ),
             )
             val state by viewModel.state.collectAsStateWithLifecycle()
+            val backendConfiguration by viewModel.backendConfiguration.collectAsStateWithLifecycle()
             LoginScreen(
                 state = state,
+                backendConfiguration = backendConfiguration,
                 onLogin = { email, password ->
                     viewModel.login(email, password) {
                         scope.launch {
@@ -71,6 +76,7 @@ fun PhotoMapApp(container: AppContainer) {
                             container.assetMutationQueue.enqueueWork()
                             container.syncRepository.scheduleBackgroundSync()
                             container.offlineImageCacheCoordinator.enqueue()
+                            container.assetMetadataBackfillCoordinator.enqueue()
                             navController.navigate(Routes.GALLERY) {
                                 popUpTo(Routes.LOGIN) { inclusive = true }
                             }
@@ -78,16 +84,25 @@ fun PhotoMapApp(container: AppContainer) {
                     }
                 },
                 onRegister = { navController.navigate(Routes.REGISTER) },
+                onConfigureBackend = { useCustomUrl, customBaseUrl ->
+                    viewModel.switchBackend(useCustomUrl, customBaseUrl) {}
+                },
+                onClearBackendError = viewModel::clearBackendError,
             )
         }
 
         composable(Routes.REGISTER) {
             val viewModel: AuthViewModel = viewModel(
-                factory = AuthViewModelFactory(container.authRepository),
+                factory = AuthViewModelFactory(
+                    container.authRepository,
+                    container.backendServerManager,
+                ),
             )
             val state by viewModel.state.collectAsStateWithLifecycle()
+            val backendConfiguration by viewModel.backendConfiguration.collectAsStateWithLifecycle()
             RegisterScreen(
                 state = state,
+                backendConfiguration = backendConfiguration,
                 onRegister = { email, password, displayName ->
                     viewModel.register(email, password, displayName) {
                         scope.launch {
@@ -96,6 +111,7 @@ fun PhotoMapApp(container: AppContainer) {
                             container.galleryRepository.clearRemoteReplica()
                             container.syncRepository.scheduleBackgroundSync()
                             container.offlineImageCacheCoordinator.enqueue()
+                            container.assetMetadataBackfillCoordinator.enqueue()
                             navController.navigate(Routes.GALLERY) {
                                 popUpTo(Routes.LOGIN) { inclusive = true }
                             }
@@ -103,6 +119,10 @@ fun PhotoMapApp(container: AppContainer) {
                     }
                 },
                 onLogin = { navController.popBackStack() },
+                onConfigureBackend = { useCustomUrl, customBaseUrl ->
+                    viewModel.switchBackend(useCustomUrl, customBaseUrl) {}
+                },
+                onClearBackendError = viewModel::clearBackendError,
             )
         }
 
@@ -122,6 +142,7 @@ fun PhotoMapApp(container: AppContainer) {
             val assets = viewModel.pagingData.collectAsLazyPagingItems()
             MediaPermissionGate(
                 onGranted = {
+                    container.assetMetadataBackfillCoordinator.enqueue()
                     if (container.syncRepository.backgroundSyncEnabled.value) {
                         scope.launch { container.syncRepository.scanAndSync() }
                     }
@@ -284,7 +305,11 @@ fun PhotoMapApp(container: AppContainer) {
 
         composable(Routes.SETTINGS) {
             val viewModel: SettingsViewModel = viewModel(
-                factory = SettingsViewModelFactory(container.syncRepository),
+                factory = SettingsViewModelFactory(
+                    container.syncRepository,
+                    container.backendServerManager,
+                    container.assetMetadataBackfillCoordinator,
+                ),
             )
             val pending by viewModel.pendingCount.collectAsStateWithLifecycle()
             val failed by viewModel.failedCount.collectAsStateWithLifecycle()
@@ -298,6 +323,11 @@ fun PhotoMapApp(container: AppContainer) {
             val offlineImageCacheEnabled by viewModel.offlineImageCacheEnabled.collectAsStateWithLifecycle()
             val imageCacheLimitMb by viewModel.imageCacheLimitMb.collectAsStateWithLifecycle()
             val imageCacheStatus by viewModel.offlineImageCacheStatus.collectAsStateWithLifecycle()
+            val backendConfiguration by viewModel.backendConfiguration.collectAsStateWithLifecycle()
+            val backendActionState by viewModel.backendActionState.collectAsStateWithLifecycle()
+            val metadataBackfillState by viewModel.metadataBackfillState.collectAsStateWithLifecycle()
+            val metadataBackfillPending by viewModel.metadataBackfillPendingCount.collectAsStateWithLifecycle()
+            val metadataBackfillFailed by viewModel.metadataBackfillFailedCount.collectAsStateWithLifecycle()
             SettingsScreen(
                 pendingCount = pending,
                 failedCount = failed,
@@ -313,6 +343,12 @@ fun PhotoMapApp(container: AppContainer) {
                 imageCacheLimitMb = imageCacheLimitMb,
                 imageCacheLimitPresetsMb = viewModel.imageCacheLimitPresetsMb,
                 imageCacheStatus = imageCacheStatus,
+                backendConfiguration = backendConfiguration,
+                backendSaving = backendActionState.saving,
+                backendError = backendActionState.errorMessage,
+                metadataBackfillState = metadataBackfillState,
+                metadataBackfillPendingCount = metadataBackfillPending,
+                metadataBackfillFailedCount = metadataBackfillFailed,
                 onBack = navController::popBackStack,
                 onSync = viewModel::sync,
                 onRetry = viewModel::retryFailed,
@@ -325,6 +361,18 @@ fun PhotoMapApp(container: AppContainer) {
                 onImageCacheLimitChange = viewModel::setImageCacheLimitMb,
                 onDownloadOfflineImages = viewModel::downloadOfflineImages,
                 onClearOfflineImageCache = viewModel::clearOfflineImageCache,
+                onRetryMetadataBackfill = viewModel::retryMetadataBackfill,
+                onMetadataPermissionGranted = viewModel::onMetadataPermissionGranted,
+                onConfigureBackend = { useCustomUrl, customBaseUrl ->
+                    viewModel.switchBackend(useCustomUrl, customBaseUrl) { changed ->
+                        if (changed) {
+                            navController.navigate(Routes.LOGIN) {
+                                popUpTo(Routes.GALLERY) { inclusive = true }
+                            }
+                        }
+                    }
+                },
+                onClearBackendError = viewModel::clearBackendError,
                 onLogout = {
                     scope.launch {
                         container.syncRepository.cancelAllSync()

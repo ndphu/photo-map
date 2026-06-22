@@ -2,7 +2,8 @@
 
 ## Quy ước
 
-- Base URL tùy môi trường, ví dụ `http://192.168.1.182:48080/`.
+- Base URL production hiện được build với `https://photo-map-msr2.onrender.com/`. Android dùng giá trị `BuildConfig.API_BASE_URL` làm mặc định và cho phép override runtime.
+- Custom Android base URL phải là HTTPS, hoặc HTTP tới localhost/private IP; URL phải ở root và luôn được chuẩn hóa có dấu `/` cuối.
 - API riêng tư dùng `Authorization: Bearer <JWT>`.
 - Timestamp dùng RFC 3339 UTC nếu không ghi khác.
 - JSON error thống nhất:
@@ -30,6 +31,7 @@
 | GET | `/assets/{id}/read-url` | Yes | Signed GET URL |
 | PATCH | `/assets/{id}/favorite` | Yes | Updated asset |
 | PATCH | `/assets/{id}/archive` | Yes | Updated asset |
+| PUT | `/assets/{id}/metadata` | Yes | Replaced EXIF/location metadata |
 | POST | `/assets/{id}/trash` | Yes | Updated asset |
 | POST | `/assets/{id}/restore` | Yes | Updated asset |
 | DELETE | `/assets/{id}` | Yes | `204` |
@@ -40,6 +42,26 @@
 `GET /assets/{id}` returns richer metadata for the authenticated user's detail view. Optional fields include `checksumSha256`, `takenAtSource`, `timezoneOffsetMinutes`, `orientation`, `country`, `region`, `placeName`, `cameraMake`, `cameraModel`, `software`, `isHidden`, `trashedAt`, `uploadedAt`, `createdAt`, and `updatedAt`.
 
 List and search responses remain lightweight. Signed URLs, presigned URLs, and storage credentials are not exposed as display metadata.
+
+### `PUT /assets/{id}/metadata`
+
+Replaces metadata for an asset owned by the authenticated user. Nullable or omitted fields are stored as `NULL`. Latitude and longitude must either both be present or both be null.
+
+```json
+{
+  "takenAt": "2026-06-22T03:30:00Z",
+  "takenAtSource": "exif",
+  "timezoneOffsetMinutes": 420,
+  "orientation": 1,
+  "latitude": 10.123,
+  "longitude": 106.123,
+  "cameraMake": "Google",
+  "cameraModel": "Pixel 8",
+  "software": "Android"
+}
+```
+
+The update and its `asset_changes` upsert event are committed in one transaction. Changing coordinates clears derived country/region/city/place values. This endpoint never reads or writes R2 objects.
 
 ## Authentication
 

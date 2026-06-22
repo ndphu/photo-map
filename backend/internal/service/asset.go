@@ -58,6 +58,20 @@ type SearchAssetsParams struct {
 	Cursor string
 }
 
+type ReplaceAssetMetadataParams struct {
+	UserID                string
+	AssetID               string
+	TakenAt               *time.Time
+	TakenAtSource         *string
+	TimezoneOffsetMinutes *int16
+	Orientation           *int16
+	Latitude              *float64
+	Longitude             *float64
+	CameraMake            *string
+	CameraModel           *string
+	Software              *string
+}
+
 type searchCursor struct {
 	Offset int `json:"offset"`
 }
@@ -208,6 +222,17 @@ func (service *AssetService) UpdateArchive(ctx context.Context, userID string, a
 	return service.mutateAssetWithChange(ctx, assetChangeUpsert, func(queries *sqlc.Queries) (sqlc.Asset, error) {
 		return queries.UpdateAssetArchive(ctx, sqlc.UpdateAssetArchiveParams{
 			ID: assetID, UserID: userID, IsArchived: isArchived,
+		})
+	})
+}
+
+func (service *AssetService) ReplaceMetadata(ctx context.Context, params ReplaceAssetMetadataParams) (model.AssetDetail, error) {
+	return service.mutateAssetWithChange(ctx, assetChangeUpsert, func(queries *sqlc.Queries) (sqlc.Asset, error) {
+		return queries.ReplaceAssetMetadata(ctx, sqlc.ReplaceAssetMetadataParams{
+			ID: params.AssetID, UserID: params.UserID, TakenAt: params.TakenAt,
+			TakenAtSource: params.TakenAtSource, TimezoneOffsetMinutes: params.TimezoneOffsetMinutes,
+			Orientation: params.Orientation, Latitude: params.Latitude, Longitude: params.Longitude,
+			CameraMake: params.CameraMake, CameraModel: params.CameraModel, Software: params.Software,
 		})
 	})
 }

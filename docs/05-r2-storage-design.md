@@ -46,6 +46,7 @@ users/{userId}/posters/{yyyy}/{mm}/{assetUuid}_poster.webp
 - PUT URL được ký cùng content type dự kiến.
 - URL hết hạn có thể refresh qua `/upload-sessions/{id}/resume` mà không đổi key.
 - Gallery không trả public object URL; backend sinh signed GET URL cho thumbnail/preview.
+- Android có thể xin signed GET URL cho `original` theo thao tác người dùng. Original không thuộc offline image cache: viewer chỉ giữ file tạm cho asset hiện tại, còn Download stream tới URI từ system document picker.
 
 ## Complete upload
 

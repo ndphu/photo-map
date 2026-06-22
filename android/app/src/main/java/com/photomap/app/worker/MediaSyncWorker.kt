@@ -173,7 +173,7 @@ class MediaSyncWorker(
             }
 
             if (resolution is SessionResolution.Uploaded) {
-                markUploaded(asset.localAssetId, resolution.assetId)
+                markUploaded(asset.localAssetId, resolution.assetId, metadataSent = false)
                 return
             }
 
@@ -191,7 +191,7 @@ class MediaSyncWorker(
 
                     resolution = resolveSession(resumeUploadSession(sessionId))
                     if (resolution is SessionResolution.Uploaded) {
-                        markUploaded(asset.localAssetId, resolution.assetId)
+                        markUploaded(asset.localAssetId, resolution.assetId, metadataSent = false)
                         return
                     }
                     active = resolution as SessionResolution.Active
@@ -208,12 +208,12 @@ class MediaSyncWorker(
 
                 resolution = resolveSession(resumeUploadSession(sessionId))
                 if (resolution is SessionResolution.Uploaded) {
-                    markUploaded(asset.localAssetId, resolution.assetId)
+                    markUploaded(asset.localAssetId, resolution.assetId, metadataSent = false)
                     return
                 }
                 throw error
             }
-            markUploaded(asset.localAssetId, response.assetId)
+            markUploaded(asset.localAssetId, response.assetId, metadataSent = true)
         } catch (error: Exception) {
             val failedSessionId = uploadSessionId
             if (
@@ -348,12 +348,17 @@ class MediaSyncWorker(
         error is SessionResetRequiredException ||
             error is HttpException && (error.code() == HTTP_FORBIDDEN || error.code() == HTTP_NOT_FOUND)
 
-    private suspend fun markUploaded(localAssetId: String, remoteAssetId: String) {
+    private suspend fun markUploaded(localAssetId: String, remoteAssetId: String, metadataSent: Boolean) {
         dao.markUploaded(
             id = localAssetId,
             status = SyncStatus.UPLOADED,
             remoteAssetId = remoteAssetId,
             syncedAt = System.currentTimeMillis(),
+            metadataStatus = if (metadataSent) {
+                com.photomap.app.data.local.MetadataBackfillStatus.COMPLETED
+            } else {
+                com.photomap.app.data.local.MetadataBackfillStatus.PENDING
+            },
         )
     }
 

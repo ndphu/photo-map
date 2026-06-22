@@ -1,6 +1,7 @@
 package com.photomap.app.data.network
 
 import com.photomap.app.BuildConfig
+import com.photomap.app.data.preferences.BackendUrlStore
 import com.photomap.app.data.security.SecureTokenStore
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -9,8 +10,12 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 
 object ApiFactory {
-    fun create(tokenStore: SecureTokenStore): Pair<PhotoMapApi, OkHttpClient> {
+    fun create(
+        tokenStore: SecureTokenStore,
+        backendUrlStore: BackendUrlStore,
+    ): Pair<PhotoMapApi, OkHttpClient> {
         val client = OkHttpClient.Builder()
+            .addInterceptor(BackendUrlInterceptor(backendUrlStore))
             .addInterceptor { chain ->
                 val requestBuilder = chain.request().newBuilder()
                 tokenStore.accessToken()?.let {

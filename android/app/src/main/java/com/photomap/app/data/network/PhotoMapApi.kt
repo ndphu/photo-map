@@ -7,6 +7,7 @@ import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.Path
 import retrofit2.http.Query
+import retrofit2.http.PUT
 
 interface PhotoMapApi {
     @POST("auth/register")
@@ -74,6 +75,12 @@ interface PhotoMapApi {
     suspend fun updateArchive(
         @Path("id") id: String,
         @Body request: ArchiveRequest,
+    ): AssetDetailDto
+
+    @PUT("assets/{id}/metadata")
+    suspend fun replaceAssetMetadata(
+        @Path("id") id: String,
+        @Body request: ReplaceAssetMetadataRequest,
     ): AssetDetailDto
 
     @POST("assets/{id}/trash")

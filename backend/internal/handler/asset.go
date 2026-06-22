@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -28,6 +29,18 @@ type updateFavoriteRequest struct {
 
 type updateArchiveRequest struct {
 	IsArchived *bool `json:"isArchived" binding:"required"`
+}
+
+type replaceAssetMetadataRequest struct {
+	TakenAt               *time.Time `json:"takenAt"`
+	TakenAtSource         *string    `json:"takenAtSource"`
+	TimezoneOffsetMinutes *int16     `json:"timezoneOffsetMinutes"`
+	Orientation           *int16     `json:"orientation"`
+	Latitude              *float64   `json:"latitude"`
+	Longitude             *float64   `json:"longitude"`
+	CameraMake            *string    `json:"cameraMake"`
+	CameraModel           *string    `json:"cameraModel"`
+	Software              *string    `json:"software"`
 }
 
 func NewAssetHandler(assetService *service.AssetService) *AssetHandler {
@@ -183,6 +196,71 @@ func (handler *AssetHandler) UpdateArchive(ctx *gin.Context) {
 	}
 
 	ctx.JSON(http.StatusOK, asset)
+}
+
+func (handler *AssetHandler) ReplaceMetadata(ctx *gin.Context) {
+	userID, ok := authenticatedUserID(ctx)
+	if !ok {
+		return
+	}
+
+	var request replaceAssetMetadataRequest
+	if err := ctx.ShouldBindJSON(&request); err != nil || !validAssetMetadata(request) {
+		util.WriteError(ctx, http.StatusBadRequest, "invalid_request", "asset metadata is invalid")
+		return
+	}
+
+	asset, err := handler.assetService.ReplaceMetadata(ctx.Request.Context(), service.ReplaceAssetMetadataParams{
+		UserID: userID, AssetID: ctx.Param("id"), TakenAt: request.TakenAt,
+		TakenAtSource:         normalizeOptionalString(request.TakenAtSource),
+		TimezoneOffsetMinutes: request.TimezoneOffsetMinutes, Orientation: request.Orientation,
+		Latitude: request.Latitude, Longitude: request.Longitude,
+		CameraMake:  normalizeOptionalString(request.CameraMake),
+		CameraModel: normalizeOptionalString(request.CameraModel),
+		Software:    normalizeOptionalString(request.Software),
+	})
+	if err != nil {
+		writeAssetError(ctx, err)
+		return
+	}
+	ctx.JSON(http.StatusOK, asset)
+}
+
+func validAssetMetadata(request replaceAssetMetadataRequest) bool {
+	if (request.Latitude == nil) != (request.Longitude == nil) {
+		return false
+	}
+	if request.Latitude != nil && (math.IsNaN(*request.Latitude) || math.IsInf(*request.Latitude, 0) || *request.Latitude < -90 || *request.Latitude > 90) {
+		return false
+	}
+	if request.Longitude != nil && (math.IsNaN(*request.Longitude) || math.IsInf(*request.Longitude, 0) || *request.Longitude < -180 || *request.Longitude > 180) {
+		return false
+	}
+	if request.TimezoneOffsetMinutes != nil && (*request.TimezoneOffsetMinutes < -840 || *request.TimezoneOffsetMinutes > 840) {
+		return false
+	}
+	if request.Orientation != nil && (*request.Orientation < 1 || *request.Orientation > 8) {
+		return false
+	}
+	if request.TakenAtSource != nil {
+		switch strings.TrimSpace(*request.TakenAtSource) {
+		case "exif", "media_store", "video_metadata":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeOptionalString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
 }
 
 func (handler *AssetHandler) Trash(ctx *gin.Context) {

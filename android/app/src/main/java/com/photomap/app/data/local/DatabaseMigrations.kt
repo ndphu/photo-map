@@ -107,3 +107,14 @@ val MIGRATION_4_5 = object : Migration(4, 5) {
         database.execSQL("ALTER TABLE remote_assets ADD COLUMN signed_url_expires_at INTEGER")
     }
 }
+
+val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE local_assets ADD COLUMN metadataBackfillStatus TEXT NOT NULL DEFAULT 'pending'")
+        database.execSQL("ALTER TABLE local_assets ADD COLUMN metadataBackfilledAt INTEGER")
+        database.execSQL("ALTER TABLE local_assets ADD COLUMN metadataBackfillError TEXT")
+        database.execSQL("ALTER TABLE remote_assets ADD COLUMN taken_at_source TEXT")
+        database.execSQL("ALTER TABLE remote_assets ADD COLUMN timezone_offset_minutes INTEGER")
+        database.execSQL("ALTER TABLE remote_assets ADD COLUMN software TEXT")
+    }
+}

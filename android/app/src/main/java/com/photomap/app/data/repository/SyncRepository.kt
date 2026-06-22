@@ -39,6 +39,7 @@ class SyncRepository(
     private val settingsStore: SyncSettingsStore,
     private val assetMutationQueue: AssetMutationQueue? = null,
     private val offlineImageCache: OfflineImageCacheCoordinator? = null,
+    private val metadataBackfill: AssetMetadataBackfillCoordinator? = null,
 ) : GallerySyncController {
     private val workManager = WorkManager.getInstance(context)
 
@@ -155,6 +156,7 @@ class SyncRepository(
         workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME)
         assetMutationQueue?.cancelWork()
         offlineImageCache?.cancel()
+        metadataBackfill?.cancel()
     }
 
     fun setOfflineImageCacheEnabled(enabled: Boolean) {

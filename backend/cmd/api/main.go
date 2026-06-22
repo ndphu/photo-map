@@ -125,6 +125,7 @@ func buildRouter(logger *slog.Logger, cfg config.Config, pool *pgxpool.Pool) *gi
 	protected.GET("/assets/:id/read-url", assetHandler.ReadURL)
 	protected.PATCH("/assets/:id/favorite", assetHandler.UpdateFavorite)
 	protected.PATCH("/assets/:id/archive", assetHandler.UpdateArchive)
+	protected.PUT("/assets/:id/metadata", assetHandler.ReplaceMetadata)
 	protected.POST("/assets/:id/trash", assetHandler.Trash)
 	protected.POST("/assets/:id/restore", assetHandler.Restore)
 	protected.DELETE("/assets/:id", assetHandler.Delete)

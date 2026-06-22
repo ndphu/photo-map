@@ -181,6 +181,8 @@ data class RemoteAssetDto(
     val posterFrameUrl: String?,
     val signedUrlExpiresAt: Long? = null,
     val takenAt: String?,
+    val takenAtSource: String? = null,
+    val timezoneOffsetMinutes: Int? = null,
     val width: Int?,
     val height: Int?,
     val durationMs: Long?,
@@ -193,6 +195,7 @@ data class RemoteAssetDto(
     val placeName: String?,
     val cameraMake: String?,
     val cameraModel: String?,
+    val software: String? = null,
     val isFavorite: Boolean,
     val isArchived: Boolean,
     val isTrashed: Boolean,
@@ -246,6 +249,19 @@ data class FavoriteRequest(val isFavorite: Boolean)
 
 @JsonClass(generateAdapter = true)
 data class ArchiveRequest(val isArchived: Boolean)
+
+@JsonClass(generateAdapter = true)
+data class ReplaceAssetMetadataRequest(
+    val takenAt: String?,
+    val takenAtSource: String?,
+    val timezoneOffsetMinutes: Int?,
+    val orientation: Int?,
+    val latitude: Double?,
+    val longitude: Double?,
+    val cameraMake: String?,
+    val cameraModel: String?,
+    val software: String?,
+)
 
 @JsonClass(generateAdapter = true)
 data class AlbumDto(

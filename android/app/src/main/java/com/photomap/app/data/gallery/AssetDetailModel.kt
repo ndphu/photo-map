@@ -56,6 +56,8 @@ fun RemoteAssetEntity.toDetailModel() = AssetDetailModel(
     originalFilename = originalFilename,
     fileSizeBytes = fileSizeBytes,
     takenAt = takenAt,
+    takenAtSource = takenAtSource,
+    timezoneOffsetMinutes = timezoneOffsetMinutes,
     width = width,
     height = height,
     durationMs = durationMs,
@@ -72,6 +74,7 @@ fun RemoteAssetEntity.toDetailModel() = AssetDetailModel(
     placeName = placeName,
     cameraMake = cameraMake,
     cameraModel = cameraModel,
+    software = software,
     uploadedAt = uploadedAt,
     updatedAt = updatedAt,
 )

@@ -58,6 +58,13 @@ fun MediaPermissionGate(
         )
     }
     var notificationRequestAttempted by remember { mutableStateOf(false) }
+    var locationRequestAttempted by remember { mutableStateOf(false) }
+    val locationLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { allowed ->
+        locationRequestAttempted = true
+        if (allowed) onGranted()
+    }
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
@@ -75,6 +82,17 @@ fun MediaPermissionGate(
     LaunchedEffect(granted) {
         if (granted) {
             onGranted()
+            if (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                !locationRequestAttempted &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.ACCESS_MEDIA_LOCATION,
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                locationRequestAttempted = true
+                locationLauncher.launch(Manifest.permission.ACCESS_MEDIA_LOCATION)
+            }
             if (
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 !notificationRequestAttempted &&

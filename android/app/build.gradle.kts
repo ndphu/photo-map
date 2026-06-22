@@ -21,7 +21,7 @@ android {
         versionCode = 1
         versionName = "1.0"
 
-        buildConfigField("String", "API_BASE_URL", "\"http://192.168.1.182:48080/\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://photo-map-msr2.onrender.com/\"")
     }
 
     buildFeatures {

@@ -213,6 +213,30 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
   is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
 
+-- name: ReplaceAssetMetadata :one
+UPDATE assets SET
+  taken_at = sqlc.narg('taken_at'),
+  taken_at_source = sqlc.narg('taken_at_source'),
+  timezone_offset_minutes = sqlc.narg('timezone_offset_minutes'),
+  orientation = sqlc.narg('orientation'),
+  latitude = sqlc.narg('latitude'),
+  longitude = sqlc.narg('longitude'),
+  camera_make = sqlc.narg('camera_make'),
+  camera_model = sqlc.narg('camera_model'),
+  software = sqlc.narg('software'),
+  updated_at = now(),
+  country = NULL,
+  region = NULL,
+  city = NULL,
+  place_name = NULL
+WHERE id = sqlc.arg('id')::uuid AND user_id = sqlc.arg('user_id')::uuid
+RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
+  preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
+  checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
+  width, height, orientation, duration_ms, latitude, longitude, country, region, city,
+  place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+
 -- name: MoveAssetToTrash :one
 UPDATE assets SET is_trashed = true, trashed_at = now()
 WHERE id = $1::uuid AND user_id = $2::uuid

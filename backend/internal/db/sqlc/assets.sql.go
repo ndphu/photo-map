@@ -107,6 +107,54 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Asset
 	return scanAsset(row)
 }
 
+const replaceAssetMetadata = `
+UPDATE assets SET
+  taken_at = $1,
+  taken_at_source = $2,
+  timezone_offset_minutes = $3,
+  orientation = $4,
+  latitude = $5,
+  longitude = $6,
+  camera_make = $7,
+  camera_model = $8,
+  software = $9,
+  updated_at = now(),
+  country = NULL,
+  region = NULL,
+  city = NULL,
+  place_name = NULL
+WHERE id = $10::uuid AND user_id = $11::uuid
+RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
+  preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,
+  checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
+  width, height, orientation, duration_ms, latitude, longitude, country, region, city,
+  place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+`
+
+type ReplaceAssetMetadataParams struct {
+	TakenAt               *time.Time
+	TakenAtSource         *string
+	TimezoneOffsetMinutes *int16
+	Orientation           *int16
+	Latitude              *float64
+	Longitude             *float64
+	CameraMake            *string
+	CameraModel           *string
+	Software              *string
+	ID                    string
+	UserID                string
+}
+
+func (q *Queries) ReplaceAssetMetadata(ctx context.Context, arg ReplaceAssetMetadataParams) (Asset, error) {
+	row := q.db.QueryRow(ctx, replaceAssetMetadata,
+		arg.TakenAt, arg.TakenAtSource, arg.TimezoneOffsetMinutes, arg.Orientation,
+		arg.Latitude, arg.Longitude, arg.CameraMake, arg.CameraModel, arg.Software,
+		arg.ID, arg.UserID,
+	)
+	return scanAsset(row)
+}
+
 const getAssetByIDForUser = `
 SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
   preview_key, poster_frame_key, media_type, mime_type, original_filename, file_size_bytes,

@@ -21,13 +21,16 @@ flowchart LR
 
 ### Android
 
-- Jetpack Compose cho login, register, gallery, detail và settings.
+- Jetpack Compose cho auth, gallery, search, albums, asset detail và settings.
 - MVVM với `StateFlow` cho UI state.
-- Retrofit/OkHttp gọi backend; Coil tải thumbnail/preview qua signed URL.
+- Retrofit/OkHttp gọi backend; base URL mặc định đến từ `BuildConfig` và có thể đổi ở runtime bằng cấu hình custom server.
+- Coil tải và cache thumbnail/preview qua signed URL với cache key ổn định theo asset/variant.
 - MediaStore scanner đọc ảnh/video và metadata.
-- Room `local_assets` lưu trạng thái đồng bộ cục bộ.
-- WorkManager chạy scan định kỳ và upload foreground/background.
-- Upload song song theo asset, mặc định 8, giới hạn 1-16.
+- Room giữ `local_assets`, remote asset replica, change-feed cursor và metadata mutation queue.
+- WorkManager chạy upload, periodic scan, metadata push và offline image prefetch.
+- Upload song song theo asset, mặc định 8, dùng preset 8/16/32/64/128 và có thể pause độc lập với periodic scan.
+- Background upload mặc định tắt; Wi-Fi only mặc định bật.
+- Asset detail đọc Room trước, hỗ trợ swipe, preview zoom, load/download original theo yêu cầu.
 
 ### Backend
 
@@ -52,6 +55,7 @@ flowchart LR
 - R2 credential chỉ tồn tại ở backend. Android chỉ nhận presigned URL có thời hạn.
 - Maintenance endpoint yêu cầu email JWT thuộc `ADMIN_EMAILS`.
 - Hard delete chỉ xóa DB sau khi xóa R2 thành công.
+- Custom backend chỉ chấp nhận HTTPS hoặc HTTP tới localhost/private IP. Đổi backend hủy worker, logout và xóa state gắn với server cũ.
 
 ## Luồng dữ liệu chính
 
@@ -60,8 +64,10 @@ flowchart LR
 3. Worker tính SHA-256 và tạo hoặc resume upload session.
 4. Android PUT trực tiếp các object vào R2.
 5. Backend `HEAD` original, tạo hoặc tái sử dụng asset trong transaction.
-6. Gallery lấy metadata từ PostgreSQL và signed GET URL từ backend.
-7. Maintenance cleanup xử lý object của session hết hạn nhưng chưa tạo asset.
+6. Android replicate metadata qua `GET /assets/changes`, commit snapshot và cursor cùng transaction rồi render gallery từ Room.
+7. Favorite/archive/trash/restore/hard-delete được ghi vào local pending queue, push lên backend và reconcile lại bằng change feed.
+8. Coil cache thumbnail/preview; original chỉ được tải tạm hoặc stream tới URI do người dùng chọn.
+9. Maintenance cleanup xử lý object của session hết hạn nhưng chưa tạo asset.
 
 ## Cấu trúc repository
 
