@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { AssetGridCard } from "../components/AssetGridCard";
 import { PagePanel } from "../components/PagePanel";
+import { saveViewerContext } from "../features/gallery/viewerContext";
 import {
   addAssetToAlbum,
   getAlbum,
@@ -85,6 +87,11 @@ export function AlbumDetailsPage() {
       })
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [albumAssetIdSet, pickerQuery, replicaAssets]);
+
+  const albumAssetIds = useMemo(
+    () => albumAssets.map((asset) => asset.id),
+    [albumAssets],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -232,6 +239,15 @@ export function AlbumDetailsPage() {
     }
   };
 
+  const handleOpenAlbumAsset = () => {
+    saveViewerContext({
+      source: "album",
+      backTo: `/albums/${albumId}`,
+      assetIds: albumAssetIds,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   return (
     <PagePanel title="Album Details">
       <div className="album-detail-topbar">
@@ -296,44 +312,30 @@ export function AlbumDetailsPage() {
                 const source = getDisplayUrl(asset);
 
                 return (
-                  <article key={asset.id} className="search-card">
-                    <Link to={`/assets/${asset.id}`} className="search-thumb-wrap">
-                      {source ? (
-                        <img
-                          className="search-thumb"
-                          src={source}
-                          alt={asset.id}
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="search-thumb-placeholder">Preview unavailable</div>
-                      )}
-                    </Link>
-                    <div className="search-card-meta">
-                      <p className="search-card-title">{asset.mimeType}</p>
-                      <p className="search-card-date">{formatTakenAt(asset.takenAt)}</p>
-                      <div className="search-card-flags">
-                        {asset.mediaType === "video" ? (
-                          <span className="gallery-flag">Video</span>
-                        ) : null}
-                        {asset.isFavorite ? (
-                          <span className="gallery-flag">Favorite</span>
-                        ) : null}
-                      </div>
-                      <div className="albums-actions-row">
-                        <button
-                          type="button"
-                          className="secondary-btn danger"
-                          disabled={isMutating}
-                          onClick={() => {
-                            void handleRemoveFromAlbum(asset.id);
-                          }}
-                        >
-                          Remove from album
-                        </button>
-                      </div>
-                    </div>
-                  </article>
+                  <AssetGridCard
+                    key={asset.id}
+                    id={asset.id}
+                    to={`/assets/${asset.id}`}
+                    sourceUrl={source}
+                    alt={`Album asset ${asset.id}`}
+                    mimeType={asset.mimeType}
+                    takenAtLabel={formatTakenAt(asset.takenAt)}
+                    mediaType={asset.mediaType}
+                    isFavorite={asset.isFavorite}
+                    onOpen={() => handleOpenAlbumAsset()}
+                    actions={
+                      <button
+                        type="button"
+                        className="secondary-btn danger"
+                        disabled={isMutating}
+                        onClick={() => {
+                          void handleRemoveFromAlbum(asset.id);
+                        }}
+                      >
+                        Remove from album
+                      </button>
+                    }
+                  />
                 );
               })}
             </div>

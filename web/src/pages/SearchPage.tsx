@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
+import { AssetGridCard } from "../components/AssetGridCard";
 import { PagePanel } from "../components/PagePanel";
+import { saveViewerContext } from "../features/gallery/viewerContext";
 import {
   getSearchAssetReadUrl,
   searchAssets,
@@ -77,8 +79,13 @@ function updateAssetUrl(
 }
 
 export function SearchPage() {
-  const [searchInput, setSearchInput] = useState("");
-  const [activeQuery, setActiveQuery] = useState("");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeQuery = useMemo(
+    () => new URLSearchParams(location.search).get("q") ?? "",
+    [location.search],
+  );
+  const activeQuery = useMemo(() => routeQuery.trim(), [routeQuery]);
   const [results, setResults] = useState<SearchAssetItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -96,9 +103,20 @@ export function SearchPage() {
   const refreshAttemptsRef = useRef<Record<string, number>>({});
   const inFlightRefreshesRef = useRef<Record<string, boolean>>({});
 
-  const queryIsBlank = searchInput.trim().length === 0;
-
-  const visibleResults = useMemo(() => results, [results]);
+  const queryIsBlank = activeQuery.length === 0;
+  const visibleResults = useMemo(
+    () => (activeQuery ? results : []),
+    [activeQuery, results],
+  );
+  const visibleAssetIds = useMemo(
+    () => visibleResults.map((asset) => asset.id),
+    [visibleResults],
+  );
+  const backToPath = useMemo(
+    () => `${location.pathname}${location.search}`,
+    [location.pathname, location.search],
+  );
+  const visibleErrorMessage = activeQuery ? errorMessage : null;
 
   useEffect(() => {
     return () => {
@@ -109,7 +127,6 @@ export function SearchPage() {
   }, []);
 
   const handleQueryChange = (value: string) => {
-    setSearchInput(value);
     setErrorMessage(null);
 
     if (debounceTimerRef.current !== null) {
@@ -119,7 +136,7 @@ export function SearchPage() {
 
     const trimmed = value.trim();
     if (!trimmed) {
-      setActiveQuery("");
+      navigate("/search", { replace: true });
       setResults([]);
       setNextCursor(null);
       setHasSearched(false);
@@ -131,7 +148,7 @@ export function SearchPage() {
     }
 
     debounceTimerRef.current = window.setTimeout(() => {
-      setActiveQuery(trimmed);
+      navigate(`/search?q=${encodeURIComponent(trimmed)}`, { replace: true });
     }, 350);
   };
 
@@ -301,14 +318,27 @@ export function SearchPage() {
     [fallbackVariantByAssetId, refreshSourceVariant],
   );
 
+  const handleOpenAsset = useCallback(
+    () => {
+      saveViewerContext({
+        source: "search",
+        backTo: backToPath,
+        assetIds: visibleAssetIds,
+        updatedAt: new Date().toISOString(),
+      });
+    },
+    [backToPath, visibleAssetIds],
+  );
+
   return (
     <PagePanel title="Search">
       <div className="search-toolbar">
         <label className="search-query-field" htmlFor="search-input">
           Search query
           <input
+            key={routeQuery}
             id="search-input"
-            value={searchInput}
+            defaultValue={routeQuery}
             onChange={(event) => handleQueryChange(event.target.value)}
             placeholder="Try camera model, city, place, or keywords"
             autoComplete="off"
@@ -330,13 +360,13 @@ export function SearchPage() {
         </div>
       ) : null}
 
-      {errorMessage ? (
+      {visibleErrorMessage ? (
         <div className="error-banner" role="alert">
-          {errorMessage}
+          {visibleErrorMessage}
         </div>
       ) : null}
 
-      {!queryIsBlank && hasSearched && !isSearching && !errorMessage && visibleResults.length === 0 ? (
+      {!queryIsBlank && hasSearched && !isSearching && !visibleErrorMessage && visibleResults.length === 0 ? (
         <div className="search-state">
           <h2>No results</h2>
           <p>No assets matched this query.</p>
@@ -353,32 +383,22 @@ export function SearchPage() {
               );
 
               return (
-                <article key={asset.id} className="search-card">
-                  <Link to={`/assets/${asset.id}`} className="search-thumb-wrap">
-                    {source ? (
-                      <img
-                        key={`${asset.id}-${imageNonceByAssetId[asset.id] ?? 0}-${source.variant}`}
-                        className="search-thumb"
-                        src={source.url}
-                        alt={asset.id}
-                        loading="lazy"
-                        onError={() => {
-                          void handleResultImageError(asset);
-                        }}
-                      />
-                    ) : (
-                      <div className="search-thumb-placeholder">Preview unavailable</div>
-                    )}
-                  </Link>
-                  <div className="search-card-meta">
-                    <p className="search-card-title">{asset.mimeType}</p>
-                    <p className="search-card-date">{formatTakenAt(asset.takenAt)}</p>
-                    <div className="search-card-flags">
-                      {asset.mediaType === "video" ? <span className="gallery-flag">Video</span> : null}
-                      {asset.isFavorite ? <span className="gallery-flag">Favorite</span> : null}
-                    </div>
-                  </div>
-                </article>
+                <AssetGridCard
+                  key={asset.id}
+                  id={asset.id}
+                  to={`/assets/${asset.id}`}
+                  sourceUrl={source?.url ?? null}
+                  alt={`Search result ${asset.id}`}
+                  mimeType={asset.mimeType}
+                  takenAtLabel={formatTakenAt(asset.takenAt)}
+                  mediaType={asset.mediaType}
+                  isFavorite={asset.isFavorite}
+                  imageKey={`${asset.id}-${imageNonceByAssetId[asset.id] ?? 0}-${source?.variant ?? "none"}`}
+                  onOpen={() => handleOpenAsset()}
+                  onImageError={() => {
+                    void handleResultImageError(asset);
+                  }}
+                />
               );
             })}
           </div>

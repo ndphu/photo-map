@@ -37,6 +37,9 @@ function App() {
           <Route element={<AppShell />}>
             <Route path="/" element={<Navigate to="/gallery" replace />} />
             <Route path="/gallery" element={<GalleryPage />} />
+            <Route path="/favorites" element={<GalleryPage />} />
+            <Route path="/archive" element={<GalleryPage />} />
+            <Route path="/trash" element={<GalleryPage />} />
             <Route path="/assets/:id" element={<AssetDetailsPage />} />
             <Route path="/search" element={<SearchPage />} />
             <Route path="/albums" element={<AlbumsPage />} />

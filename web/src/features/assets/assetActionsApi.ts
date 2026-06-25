@@ -16,7 +16,12 @@ interface AddToAlbumRequest {
 
 const CONCURRENCY_LIMIT = 4;
 
-export type MultiActionType = "favorite" | "archive" | "trash" | "add_to_album";
+export type MultiActionType =
+  | "favorite"
+  | "archive"
+  | "trash"
+  | "restore"
+  | "add_to_album";
 
 export interface MultiActionResult {
   succeededIds: string[];
@@ -155,6 +160,9 @@ export async function runMultiAction(
         break;
       case "trash":
         await postTrash(assetId);
+        break;
+      case "restore":
+        await postRestore(assetId);
         break;
       case "add_to_album": {
         const albumId = options?.albumId?.trim();

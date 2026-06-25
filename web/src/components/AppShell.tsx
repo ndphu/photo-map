@@ -1,3 +1,5 @@
+import type { FormEvent } from "react";
+import { useMemo } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 
@@ -7,9 +9,11 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { label: "Gallery", to: "/gallery" },
-  { label: "Search", to: "/search" },
+  { label: "Photos", to: "/gallery" },
+  { label: "Favorites", to: "/favorites" },
   { label: "Albums", to: "/albums" },
+  { label: "Archive", to: "/archive" },
+  { label: "Trash", to: "/trash" },
   { label: "Settings", to: "/settings" },
 ];
 
@@ -18,8 +22,19 @@ function getPageTitle(pathname: string): string {
     return "Asset Details";
   }
 
+  if (pathname.startsWith("/search")) {
+    return "Search";
+  }
+
   const found = navItems.find((item) => pathname.startsWith(item.to));
-  return found ? found.label : "Gallery";
+  return found ? found.label : "Photos";
+}
+
+function isNavItemActive(pathname: string, item: NavItem): boolean {
+  if (item.to === "/gallery") {
+    return pathname === "/gallery";
+  }
+  return pathname.startsWith(item.to);
 }
 
 export function AppShell() {
@@ -27,10 +42,31 @@ export function AppShell() {
   const logout = useAuthStore((state) => state.logout);
   const navigate = useNavigate();
   const location = useLocation();
+  const shellSearchDefaultValue = useMemo(() => {
+    if (!location.pathname.startsWith("/search")) {
+      return "";
+    }
+
+    return new URLSearchParams(location.search).get("q") ?? "";
+  }, [location.pathname, location.search]);
 
   const handleLogout = () => {
     logout();
     navigate("/login", { replace: true });
+  };
+
+  const handleShellSearchSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const raw = formData.get("q");
+    const query = typeof raw === "string" ? raw.trim() : "";
+
+    if (!query) {
+      navigate("/search");
+      return;
+    }
+
+    navigate(`/search?q=${encodeURIComponent(query)}`);
   };
 
   return (
@@ -42,9 +78,12 @@ export function AppShell() {
             <li key={item.to}>
               <NavLink
                 to={item.to}
-                className={({ isActive }) =>
-                  isActive ? "nav-link active" : "nav-link"
-                }
+                className={({ isActive }) => {
+                  if (isActive || isNavItemActive(location.pathname, item)) {
+                    return "nav-link active";
+                  }
+                  return "nav-link";
+                }}
               >
                 {item.label}
               </NavLink>
@@ -60,7 +99,18 @@ export function AppShell() {
 
       <div className="content-wrap">
         <header className="topbar">
-          <h1 className="topbar-title">{getPageTitle(location.pathname)}</h1>
+          <div className="topbar-main">
+            <h1 className="topbar-title">{getPageTitle(location.pathname)}</h1>
+            <form className="shell-search" onSubmit={handleShellSearchSubmit} role="search">
+              <input
+                key={`shell-search-${location.pathname}-${location.search}`}
+                name="q"
+                aria-label="Search assets"
+                defaultValue={shellSearchDefaultValue}
+                placeholder="Search photos, videos, places..."
+              />
+            </form>
+          </div>
           <div className="topbar-user">
             <div>{user?.displayName ?? "Unknown User"}</div>
             <div>{user?.email ?? ""}</div>
@@ -69,6 +119,23 @@ export function AppShell() {
         <main className="page">
           <Outlet />
         </main>
+
+        <nav className="mobile-nav" aria-label="Mobile navigation">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) => {
+                if (isActive || isNavItemActive(location.pathname, item)) {
+                  return "mobile-nav-link active";
+                }
+                return "mobile-nav-link";
+              }}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </nav>
       </div>
     </div>
   );

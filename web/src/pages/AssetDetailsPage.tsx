@@ -1,6 +1,6 @@
-import type { CSSProperties, PointerEvent, WheelEvent } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent, WheelEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { PagePanel } from "../components/PagePanel";
 import { appDb } from "../db/appDb";
 import {
@@ -8,7 +8,9 @@ import {
   getAssetReadUrl,
   type ReadUrlVariant,
 } from "../features/assets/assetDetailsApi";
+import { patchFavorite } from "../features/assets/assetActionsApi";
 import { useRemoteAsset } from "../features/assets/useRemoteAsset";
+import { readViewerContext } from "../features/gallery/viewerContext";
 import { ApiError } from "../types/api";
 
 const MIN_ZOOM = 1;
@@ -20,8 +22,34 @@ interface MetadataRow {
   value: string;
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+function getContainedMediaSize(
+  frameWidth: number,
+  frameHeight: number,
+  mediaWidth: number | null,
+  mediaHeight: number | null,
+): { width: number; height: number } {
+  if (frameWidth <= 0 || frameHeight <= 0) {
+    return { width: 0, height: 0 };
+  }
+
+  if (!mediaWidth || !mediaHeight) {
+    return { width: frameWidth, height: frameHeight };
+  }
+
+  const fitScale = Math.min(frameWidth / mediaWidth, frameHeight / mediaHeight);
+  return {
+    width: Math.max(1, mediaWidth * fitScale),
+    height: Math.max(1, mediaHeight * fitScale),
+  };
 }
 
 function formatBytes(value: number | null): string | null {
@@ -132,6 +160,7 @@ async function fetchReadUrlWithSingle403Retry(
 }
 
 function AssetDetailsContent({ assetId }: { assetId: string }) {
+  const navigate = useNavigate();
   const { asset, isLoading, errorMessage: replicaErrorMessage } = useRemoteAsset(assetId);
 
   const [previewUrlOverride, setPreviewUrlOverride] = useState<string | null>(null);
@@ -142,9 +171,39 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
   const [viewerErrorMessage, setViewerErrorMessage] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [infoPanelOpen, setInfoPanelOpen] = useState(true);
+  const [isPanning, setIsPanning] = useState(false);
 
-  const panStartRef = useRef<{ x: number; y: number } | null>(null);
+  const viewerFrameRef = useRef<HTMLDivElement | null>(null);
+  const panStartRef = useRef<{
+    pointerX: number;
+    pointerY: number;
+    startPanX: number;
+    startPanY: number;
+  } | null>(null);
   const panPointerIdRef = useRef<number | null>(null);
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+
+  useEffect(() => {
+    zoomRef.current = zoom;
+  }, [zoom]);
+
+  useEffect(() => {
+    panRef.current = pan;
+  }, [pan]);
+
+  const viewerContext = readViewerContext();
+  const currentIndex = viewerContext ? viewerContext.assetIds.indexOf(assetId) : -1;
+  const previousAssetId =
+    viewerContext && currentIndex > 0
+      ? (viewerContext.assetIds[currentIndex - 1] ?? null)
+      : null;
+  const nextAssetId =
+    viewerContext && currentIndex >= 0
+      ? (viewerContext.assetIds[currentIndex + 1] ?? null)
+      : null;
+  const backPath = viewerContext?.backTo;
 
   const isVideo = asset?.mediaType === "video";
 
@@ -205,10 +264,75 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     return rows.filter((row): row is MetadataRow => row !== null);
   }, [asset]);
 
+  const clampPan = useCallback(
+    (nextPan: Point, atZoom: number): Point => {
+      if (atZoom <= MIN_ZOOM) {
+        return { x: 0, y: 0 };
+      }
+
+      const frame = viewerFrameRef.current;
+      if (!frame) {
+        return nextPan;
+      }
+
+      const frameWidth = frame.clientWidth;
+      const frameHeight = frame.clientHeight;
+
+      const mediaSize = getContainedMediaSize(
+        frameWidth,
+        frameHeight,
+        asset?.width ?? null,
+        asset?.height ?? null,
+      );
+
+      const scaledWidth = mediaSize.width * atZoom;
+      const scaledHeight = mediaSize.height * atZoom;
+
+      const maxPanX = Math.max(0, (scaledWidth - frameWidth) / 2);
+      const maxPanY = Math.max(0, (scaledHeight - frameHeight) / 2);
+
+      return {
+        x: clamp(nextPan.x, -maxPanX, maxPanX),
+        y: clamp(nextPan.y, -maxPanY, maxPanY),
+      };
+    },
+    [asset?.height, asset?.width],
+  );
+
   const resetZoomAndPan = useCallback(() => {
     setZoom(1);
     setPan({ x: 0, y: 0 });
+    setIsPanning(false);
   }, []);
+
+  const zoomAtPoint = useCallback(
+    (nextZoomValue: number, point?: Point) => {
+      const currentZoom = zoomRef.current;
+      const currentPan = panRef.current;
+      const nextZoom = clamp(nextZoomValue, MIN_ZOOM, MAX_ZOOM);
+
+      if (nextZoom <= MIN_ZOOM) {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+        setIsPanning(false);
+        return;
+      }
+
+      if (point && currentZoom > 0) {
+        const scaleRatio = nextZoom / currentZoom;
+        const anchoredPan = {
+          x: point.x - (point.x - currentPan.x) * scaleRatio,
+          y: point.y - (point.y - currentPan.y) * scaleRatio,
+        };
+        setPan(clampPan(anchoredPan, nextZoom));
+      } else {
+        setPan(clampPan(currentPan, nextZoom));
+      }
+
+      setZoom(nextZoom);
+    },
+    [clampPan],
+  );
 
   useEffect(() => {
     let isCancelled = false;
@@ -267,54 +391,106 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     };
   }, [asset, assetId]);
 
-  const updateZoom = useCallback((nextZoom: number) => {
-    const clamped = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-    setZoom(clamped);
-    if (clamped <= 1) {
-      setPan({ x: 0, y: 0 });
+  useEffect(() => {
+    const frame = viewerFrameRef.current;
+    if (!frame || typeof ResizeObserver === "undefined") {
+      return;
     }
-  }, []);
+
+    const observer = new ResizeObserver(() => {
+      if (zoomRef.current <= MIN_ZOOM) {
+        return;
+      }
+
+      setPan((current) => clampPan(current, zoomRef.current));
+    });
+
+    observer.observe(frame);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [clampPan]);
+
+  const updateZoom = useCallback(
+    (nextZoom: number) => {
+      zoomAtPoint(nextZoom);
+    },
+    [zoomAtPoint],
+  );
 
   const handleViewerWheel = useCallback(
     (event: WheelEvent<HTMLDivElement>) => {
       event.preventDefault();
 
-      const direction = event.deltaY < 0 ? 1 : -1;
-      const nextZoom = zoom + direction * ZOOM_STEP;
-      updateZoom(nextZoom);
+      const frame = viewerFrameRef.current;
+      if (!frame) {
+        return;
+      }
+
+      const rect = frame.getBoundingClientRect();
+      const point = {
+        x: event.clientX - rect.left - rect.width / 2,
+        y: event.clientY - rect.top - rect.height / 2,
+      };
+
+      const zoomDelta = clamp(-event.deltaY * 0.0015, -0.45, 0.45);
+      if (zoomDelta === 0) {
+        return;
+      }
+
+      const nextZoom = zoomRef.current * (1 + zoomDelta);
+      zoomAtPoint(nextZoom, point);
     },
-    [updateZoom, zoom],
+    [zoomAtPoint],
   );
 
-  const handleViewerDoubleClick = useCallback(() => {
-    if (zoom > 1) {
+  const handleViewerDoubleClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    if (zoomRef.current > 1.4) {
       resetZoomAndPan();
       return;
     }
 
-    updateZoom(2);
-  }, [resetZoomAndPan, updateZoom, zoom]);
+    const frame = viewerFrameRef.current;
+    if (!frame) {
+      updateZoom(2.2);
+      return;
+    }
+
+    const rect = frame.getBoundingClientRect();
+    const point = {
+      x: event.clientX - rect.left - rect.width / 2,
+      y: event.clientY - rect.top - rect.height / 2,
+    };
+
+    zoomAtPoint(2.2, point);
+  }, [resetZoomAndPan, updateZoom, zoomAtPoint]);
 
   const handlePointerDown = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      if (zoom <= 1) {
+      if (event.button !== 0 || zoomRef.current <= 1) {
         return;
       }
 
+      event.preventDefault();
+
       panPointerIdRef.current = event.pointerId;
       panStartRef.current = {
-        x: event.clientX - pan.x,
-        y: event.clientY - pan.y,
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        startPanX: panRef.current.x,
+        startPanY: panRef.current.y,
       };
+      setIsPanning(true);
 
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [pan.x, pan.y, zoom],
+    [],
   );
 
   const handlePointerMove = useCallback(
     (event: PointerEvent<HTMLDivElement>) => {
-      if (zoom <= 1) {
+      if (zoomRef.current <= 1) {
         return;
       }
 
@@ -322,19 +498,32 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
         return;
       }
 
-      setPan({
-        x: event.clientX - panStartRef.current.x,
-        y: event.clientY - panStartRef.current.y,
-      });
+      event.preventDefault();
+
+      const deltaX = event.clientX - panStartRef.current.pointerX;
+      const deltaY = event.clientY - panStartRef.current.pointerY;
+
+      const nextPan = clampPan(
+        {
+          x: panStartRef.current.startPanX + deltaX,
+          y: panStartRef.current.startPanY + deltaY,
+        },
+        zoomRef.current,
+      );
+
+      setPan(nextPan);
     },
-    [zoom],
+    [clampPan],
   );
 
   const releasePointer = useCallback((event: PointerEvent<HTMLDivElement>) => {
     if (panPointerIdRef.current === event.pointerId) {
       panPointerIdRef.current = null;
       panStartRef.current = null;
-      event.currentTarget.releasePointerCapture(event.pointerId);
+      setIsPanning(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
     }
   }, []);
 
@@ -403,6 +592,114 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     }
   }, [assetId, originalFilename]);
 
+  const handleNavigatePrevious = useCallback(() => {
+    if (!previousAssetId) {
+      return;
+    }
+    navigate(`/assets/${previousAssetId}`);
+  }, [navigate, previousAssetId]);
+
+  const handleNavigateNext = useCallback(() => {
+    if (!nextAssetId) {
+      return;
+    }
+    navigate(`/assets/${nextAssetId}`);
+  }, [navigate, nextAssetId]);
+
+  const handleCloseViewer = useCallback(() => {
+    if (backPath) {
+      navigate(backPath);
+      return;
+    }
+    navigate("/gallery");
+  }, [backPath, navigate]);
+
+  const handleToggleFavorite = useCallback(async () => {
+    if (!asset) {
+      return;
+    }
+
+    try {
+      await patchFavorite(asset.id, !asset.isFavorite);
+      await appDb.remote_assets.update(asset.id, {
+        isFavorite: !asset.isFavorite,
+      });
+    } catch (error) {
+      setViewerErrorMessage(
+        error instanceof Error ? error.message : "Unable to update favorite",
+      );
+    }
+  }, [asset]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      const key = event.key;
+
+      if (key === "Escape") {
+        event.preventDefault();
+        handleCloseViewer();
+        return;
+      }
+
+      if (key === "ArrowLeft") {
+        event.preventDefault();
+        handleNavigatePrevious();
+        return;
+      }
+
+      if (key === "ArrowRight") {
+        event.preventDefault();
+        handleNavigateNext();
+        return;
+      }
+
+      if (key.toLowerCase() === "f") {
+        event.preventDefault();
+        void handleToggleFavorite();
+        return;
+      }
+
+      if (key.toLowerCase() === "i") {
+        event.preventDefault();
+        setInfoPanelOpen((current) => !current);
+        return;
+      }
+
+      if (key === "+" || key === "=") {
+        event.preventDefault();
+        updateZoom(zoomRef.current + ZOOM_STEP);
+        return;
+      }
+
+      if (key === "-") {
+        event.preventDefault();
+        updateZoom(zoomRef.current - ZOOM_STEP);
+        return;
+      }
+
+      if (key === "0") {
+        event.preventDefault();
+        resetZoomAndPan();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [
+    handleCloseViewer,
+    handleNavigateNext,
+    handleNavigatePrevious,
+    handleToggleFavorite,
+    resetZoomAndPan,
+    updateZoom,
+  ]);
+
   if (isLoading) {
     return (
       <div className="detail-state">
@@ -426,8 +723,15 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
   }
 
   const mediaTransformStyle = {
+    transformOrigin: "center center",
     transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
   } as CSSProperties;
+
+  const viewerImageClassName = isPanning
+    ? "detail-viewer-image is-panning"
+    : "detail-viewer-image";
+  const canZoomIn = zoom < MAX_ZOOM - 0.01;
+  const canZoomOut = zoom > MIN_ZOOM + 0.01;
 
   return (
     <div className="detail-layout">
@@ -437,6 +741,45 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
             {asset.originalFilename ?? "Untitled asset"}
           </p>
           <div className="detail-viewer-actions">
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleCloseViewer}
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleNavigatePrevious}
+              disabled={!previousAssetId}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={handleNavigateNext}
+              disabled={!nextAssetId}
+            >
+              Next
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => {
+                void handleToggleFavorite();
+              }}
+            >
+              {asset.isFavorite ? "Unfavorite" : "Favorite"}
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => setInfoPanelOpen((current) => !current)}
+            >
+              {infoPanelOpen ? "Hide info" : "Show info"}
+            </button>
             <button
               type="button"
               className="secondary-btn"
@@ -457,7 +800,9 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
         </div>
 
         <div
-          className="detail-viewer-frame"
+          ref={viewerFrameRef}
+          className={zoom > MIN_ZOOM ? "detail-viewer-frame zoomed" : "detail-viewer-frame"}
+          style={{ cursor: isPanning ? "grabbing" : zoom > MIN_ZOOM ? "grab" : "zoom-in" }}
           onWheel={handleViewerWheel}
           onDoubleClick={handleViewerDoubleClick}
           onPointerDown={handlePointerDown}
@@ -470,8 +815,9 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
               {activeViewerUrl ? (
                 <img
                   src={activeViewerUrl}
-                  className="detail-viewer-image"
+                  className={viewerImageClassName}
                   style={mediaTransformStyle}
+                  draggable={false}
                   alt={asset.originalFilename ?? "Video preview"}
                   onError={() => {
                     void handleViewerImageError();
@@ -488,8 +834,9 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
           ) : activeViewerUrl ? (
             <img
               src={activeViewerUrl}
-              className="detail-viewer-image"
+              className={viewerImageClassName}
               style={mediaTransformStyle}
+              draggable={false}
               alt={asset.originalFilename ?? "Asset preview"}
               onError={() => {
                 void handleViewerImageError();
@@ -501,17 +848,38 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
         </div>
 
         <div className="detail-zoom-meta">
-          <p>
-            Zoom: <strong>{zoom.toFixed(1)}x</strong>
-          </p>
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={resetZoomAndPan}
-            disabled={zoom <= 1 && pan.x === 0 && pan.y === 0}
-          >
-            Reset view
-          </button>
+          <div>
+            <p>
+              Zoom: <strong>{zoom.toFixed(2)}x</strong>
+            </p>
+            <p className="detail-zoom-hint">Wheel to zoom at cursor, drag to pan.</p>
+          </div>
+          <div className="detail-zoom-controls">
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => updateZoom(zoom - ZOOM_STEP)}
+              disabled={!canZoomOut}
+            >
+              -
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => updateZoom(zoom + ZOOM_STEP)}
+              disabled={!canZoomIn}
+            >
+              +
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={resetZoomAndPan}
+              disabled={zoom <= 1 && pan.x === 0 && pan.y === 0}
+            >
+              Reset view
+            </button>
+          </div>
         </div>
 
         {detailErrorMessage ? (
@@ -527,17 +895,19 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
         ) : null}
       </section>
 
-      <aside className="detail-metadata-panel">
-        <h2>Metadata</h2>
-        <dl>
-          {metadataRows.map((row) => (
-            <div className="detail-meta-row" key={row.label}>
-              <dt>{row.label}</dt>
-              <dd>{row.value}</dd>
-            </div>
-          ))}
-        </dl>
-      </aside>
+      {infoPanelOpen ? (
+        <aside className="detail-metadata-panel">
+          <h2>Metadata</h2>
+          <dl>
+            {metadataRows.map((row) => (
+              <div className="detail-meta-row" key={row.label}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        </aside>
+      ) : null}
     </div>
   );
 }
