@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { AssetGridCard } from "../components/AssetGridCard";
 import { PagePanel } from "../components/PagePanel";
@@ -12,6 +12,10 @@ import {
 } from "../features/albums/albumsApi";
 import { useRemoteAssetsReplica } from "../features/assets/useRemoteAssetsReplica";
 import type { SearchAssetItem } from "../features/search/searchApi";
+
+const INITIAL_ALBUM_ASSETS_LIMIT = 180;
+const INITIAL_PICKER_ASSETS_LIMIT = 220;
+const LOAD_MORE_ASSETS_STEP = 200;
 
 function formatDateTime(value: string): string {
   const parsed = new Date(value);
@@ -57,6 +61,16 @@ export function AlbumDetailsPage() {
   const [isMutating, setIsMutating] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [albumRenderState, setAlbumRenderState] = useState<{
+    key: string;
+    limit: number;
+  }>({ key: "", limit: INITIAL_ALBUM_ASSETS_LIMIT });
+  const [pickerRenderState, setPickerRenderState] = useState<{
+    key: string;
+    limit: number;
+  }>({ key: "", limit: INITIAL_PICKER_ASSETS_LIMIT });
+  const albumLoadMoreRef = useRef<HTMLDivElement | null>(null);
+  const pickerLoadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const albumAssetIdSet = useMemo(
     () => new Set(albumAssets.map((asset) => asset.id)),
@@ -87,6 +101,32 @@ export function AlbumDetailsPage() {
       })
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }, [albumAssetIdSet, pickerQuery, replicaAssets]);
+
+  const albumRenderKey = `${albumId}:${albumAssets.length}`;
+  const albumAssetsLimit =
+    albumRenderState.key === albumRenderKey
+      ? albumRenderState.limit
+      : INITIAL_ALBUM_ASSETS_LIMIT;
+
+  const pickerRenderKey = `${albumId}:${pickerQuery}:${addableReplicaAssets.length}`;
+  const pickerAssetsLimit =
+    pickerRenderState.key === pickerRenderKey
+      ? pickerRenderState.limit
+      : INITIAL_PICKER_ASSETS_LIMIT;
+
+  const visibleAlbumAssets = useMemo(
+    () => albumAssets.slice(0, Math.min(albumAssetsLimit, albumAssets.length)),
+    [albumAssets, albumAssetsLimit],
+  );
+
+  const visiblePickerAssets = useMemo(
+    () =>
+      addableReplicaAssets.slice(
+        0,
+        Math.min(pickerAssetsLimit, addableReplicaAssets.length),
+      ),
+    [addableReplicaAssets, pickerAssetsLimit],
+  );
 
   const albumAssetIds = useMemo(
     () => albumAssets.map((asset) => asset.id),
@@ -248,6 +288,80 @@ export function AlbumDetailsPage() {
     });
   };
 
+  const increaseAlbumLimit = useCallback(() => {
+    setAlbumRenderState((current) => {
+      const currentLimit =
+        current.key === albumRenderKey ? current.limit : INITIAL_ALBUM_ASSETS_LIMIT;
+      return {
+        key: albumRenderKey,
+        limit: Math.min(albumAssets.length, currentLimit + LOAD_MORE_ASSETS_STEP),
+      };
+    });
+  }, [albumAssets.length, albumRenderKey]);
+
+  const increasePickerLimit = useCallback(() => {
+    setPickerRenderState((current) => {
+      const currentLimit =
+        current.key === pickerRenderKey ? current.limit : INITIAL_PICKER_ASSETS_LIMIT;
+      return {
+        key: pickerRenderKey,
+        limit: Math.min(addableReplicaAssets.length, currentLimit + LOAD_MORE_ASSETS_STEP),
+      };
+    });
+  }, [addableReplicaAssets.length, pickerRenderKey]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("IntersectionObserver" in window)) {
+      return;
+    }
+    if (visibleAlbumAssets.length >= albumAssets.length) {
+      return;
+    }
+
+    const target = albumLoadMoreRef.current;
+    if (!target) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          increaseAlbumLimit();
+        }
+      },
+      { root: null, rootMargin: "320px 0px", threshold: 0.01 },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [albumAssets.length, increaseAlbumLimit, visibleAlbumAssets.length]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("IntersectionObserver" in window)) {
+      return;
+    }
+    if (visiblePickerAssets.length >= addableReplicaAssets.length) {
+      return;
+    }
+
+    const target = pickerLoadMoreRef.current;
+    if (!target) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          increasePickerLimit();
+        }
+      },
+      { root: null, rootMargin: "320px 0px", threshold: 0.01 },
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [addableReplicaAssets.length, increasePickerLimit, visiblePickerAssets.length]);
+
   return (
     <PagePanel title="Album Details">
       <div className="album-detail-topbar">
@@ -307,8 +421,9 @@ export function AlbumDetailsPage() {
               <p>Add assets from the replica picker below.</p>
             </div>
           ) : (
-            <div className="search-grid">
-              {albumAssets.map((asset) => {
+            <>
+              <div className="search-grid">
+                {visibleAlbumAssets.map((asset) => {
                 const source = getDisplayUrl(asset);
 
                 return (
@@ -338,7 +453,20 @@ export function AlbumDetailsPage() {
                   />
                 );
               })}
-            </div>
+              </div>
+              {visibleAlbumAssets.length < albumAssets.length ? (
+                <div className="search-load-more-wrap" ref={albumLoadMoreRef}>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    disabled={isMutating}
+                    onClick={increaseAlbumLimit}
+                  >
+                    Load more album assets ({visibleAlbumAssets.length}/{albumAssets.length})
+                  </button>
+                </div>
+              ) : null}
+            </>
           )}
         </section>
       ) : null}
@@ -368,7 +496,7 @@ export function AlbumDetailsPage() {
           ) : (
             <>
               <div className="album-picker-list">
-                {addableReplicaAssets.map((asset) => (
+                {visiblePickerAssets.map((asset) => (
                   <label key={asset.id} className="album-picker-item">
                     <input
                       type="checkbox"
@@ -382,6 +510,18 @@ export function AlbumDetailsPage() {
                   </label>
                 ))}
               </div>
+              {visiblePickerAssets.length < addableReplicaAssets.length ? (
+                <div className="search-load-more-wrap" ref={pickerLoadMoreRef}>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    disabled={isMutating}
+                    onClick={increasePickerLimit}
+                  >
+                    Load more available assets ({visiblePickerAssets.length}/{addableReplicaAssets.length})
+                  </button>
+                </div>
+              ) : null}
               <div className="albums-actions-row">
                 <button
                   type="button"

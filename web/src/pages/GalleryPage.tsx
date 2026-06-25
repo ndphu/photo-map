@@ -49,10 +49,8 @@ const filterOptions: FilterOption[] = [
 ];
 
 const IMAGE_URL_REFRESH_CONCURRENCY = 4;
-const DEFAULT_GALLERY_CARD_HEIGHT = 360;
-const GALLERY_ROW_GAP_PX = 12;
-const VIRTUAL_OVERSCAN_ROWS = 2;
-const MIN_ASSETS_FOR_VIRTUALIZATION = 80;
+const INITIAL_RENDER_LIMIT = 420;
+const RENDER_CHUNK_SIZE = 300;
 
 interface GalleryCardProps {
   asset: RemoteAssetRow;
@@ -65,15 +63,6 @@ interface GalleryCardProps {
   onOpenAsset: (assetId: string) => void;
   onImageError: (asset: RemoteAssetRow) => Promise<void>;
   measureRef?: (node: HTMLElement | null) => void;
-}
-
-interface VirtualWindowResult {
-  renderedAssets: RemoteAssetRow[];
-  startIndex: number;
-  endIndex: number;
-  topSpacerHeight: number;
-  bottomSpacerHeight: number;
-  isVirtualized: boolean;
 }
 
 interface SelectionState {
@@ -114,6 +103,13 @@ const GalleryCard = memo(function GalleryCard({
   onImageError,
   measureRef,
 }: GalleryCardProps) {
+  const rawRatio =
+    asset.width && asset.height ? asset.width / asset.height : asset.mediaType === "video" ? 16 / 9 : 1;
+  const cardRatio = Math.min(2.5, Math.max(0.55, rawRatio));
+  const cardStyle = {
+    "--card-ratio": String(cardRatio),
+  } as CSSProperties;
+
   const handleCheckboxClick = (event: MouseEvent<HTMLInputElement>) => {
     if (event.shiftKey) {
       onToggleSelectedRange(asset.id);
@@ -131,6 +127,7 @@ const GalleryCard = memo(function GalleryCard({
             ? "gallery-card selection-mode"
             : "gallery-card"
       }
+      style={cardStyle}
       ref={measureRef}
     >
       <div className="gallery-card-overlay-top">
@@ -232,13 +229,10 @@ export function GalleryPage() {
   const [albumPromptOpen, setAlbumPromptOpen] = useState(false);
   const [albumIdInput, setAlbumIdInput] = useState("");
   const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(() => {
-    if (typeof window === "undefined") {
-      return 800;
-    }
-    return window.innerHeight;
+  const [renderState, setRenderState] = useState<{ key: string; limit: number }>({
+    key: "",
+    limit: INITIAL_RENDER_LIMIT,
   });
-  const [measuredCardHeight, setMeasuredCardHeight] = useState<number | null>(null);
 
   const refreshAttemptsRef = useRef<Record<string, number>>({});
   const inFlightRefreshesRef = useRef<Record<string, boolean>>({});
@@ -248,7 +242,6 @@ export function GalleryPage() {
       waiters: [],
     },
   );
-  const firstCardMeasureRef = useRef<HTMLElement | null>(null);
   const isOnline = useOnlineStatus();
 
   const navView: GalleryNavView = useMemo(() => {
@@ -297,7 +290,22 @@ export function GalleryPage() {
     return applyQuickFilter(navFilteredAssets, selectedFilter);
   }, [navFilteredAssets, navView, selectedFilter]);
 
-  const dateGroups = useMemo(() => groupAssetsByDate(visibleAssets), [visibleAssets]);
+  const renderKey = `${routeKey}:${visibleAssets.length}`;
+  const renderLimit =
+    renderState.key === renderKey ? renderState.limit : INITIAL_RENDER_LIMIT;
+
+  const renderedAssets = useMemo(
+    () => visibleAssets.slice(0, Math.min(renderLimit, visibleAssets.length)),
+    [renderLimit, visibleAssets],
+  );
+  const renderedAssetIdSet = useMemo(
+    () => new Set(renderedAssets.map((asset) => asset.id)),
+    [renderedAssets],
+  );
+  const dateGroups = useMemo(
+    () => groupAssetsByDate(renderedAssets),
+    [renderedAssets],
+  );
   const monthIndex = useMemo(() => buildMonthIndex(dateGroups), [dateGroups]);
 
   const orderedAssetIds = useMemo(
@@ -317,47 +325,25 @@ export function GalleryPage() {
     !showOfflineEmpty &&
     visibleAssets.length === 0;
 
-  const gridStyle = {
-    "--gallery-columns": columns,
-  } as CSSProperties;
-
-  const cardHeight = measuredCardHeight ?? DEFAULT_GALLERY_CARD_HEIGHT;
-
-  const shouldVirtualize = visibleAssets.length >= MIN_ASSETS_FOR_VIRTUALIZATION;
-
-  const virtualWindow = useMemo<VirtualWindowResult>(() => {
-    if (!shouldVirtualize) {
-      return {
-        renderedAssets: visibleAssets,
-        startIndex: 0,
-        endIndex: visibleAssets.length,
-        topSpacerHeight: 0,
-        bottomSpacerHeight: 0,
-        isVirtualized: false,
-      };
+  const rowHeight = useMemo(() => {
+    if (columns <= 2) {
+      return 260;
     }
+    if (columns === 3) {
+      return 220;
+    }
+    if (columns === 4) {
+      return 190;
+    }
+    if (columns === 5) {
+      return 165;
+    }
+    return 145;
+  }, [columns]);
 
-    const rowHeight = cardHeight + GALLERY_ROW_GAP_PX;
-    const rowsPerViewport = Math.max(1, Math.ceil(viewportHeight / rowHeight));
-    const startRow = Math.max(0, Math.floor(scrollTop / rowHeight) - VIRTUAL_OVERSCAN_ROWS);
-    const totalRows = Math.ceil(visibleAssets.length / columns);
-    const endRow = Math.min(
-      totalRows,
-      startRow + rowsPerViewport + VIRTUAL_OVERSCAN_ROWS * 2,
-    );
-
-    const startIndex = startRow * columns;
-    const endIndex = Math.min(visibleAssets.length, endRow * columns);
-
-    return {
-      renderedAssets: visibleAssets.slice(startIndex, endIndex),
-      startIndex,
-      endIndex,
-      topSpacerHeight: startRow * rowHeight,
-      bottomSpacerHeight: Math.max(0, (totalRows - endRow) * rowHeight),
-      isVirtualized: true,
-    };
-  }, [cardHeight, columns, scrollTop, shouldVirtualize, viewportHeight, visibleAssets]);
+  const gridStyle = {
+    "--gallery-row-height": `${rowHeight}px`,
+  } as CSSProperties;
 
   const triggerSync = useCallback(() => {
     void sync();
@@ -697,10 +683,38 @@ export function GalleryPage() {
         document.body.scrollTop ||
         0;
       setScrollTop(y);
+
+      const doc = document.documentElement;
+      const remaining = doc.scrollHeight - (y + window.innerHeight);
+      if (remaining < 900) {
+        setRenderState((current) => {
+          const currentLimit =
+            current.key === renderKey ? current.limit : INITIAL_RENDER_LIMIT;
+          if (currentLimit >= visibleAssets.length) {
+            if (current.key === renderKey) {
+              return current;
+            }
+            return { key: renderKey, limit: currentLimit };
+          }
+
+          const nextLimit = Math.min(
+            visibleAssets.length,
+            currentLimit + RENDER_CHUNK_SIZE,
+          );
+
+          if (current.key === renderKey && current.limit === nextLimit) {
+            return current;
+          }
+
+          return {
+            key: renderKey,
+            limit: nextLimit,
+          };
+        });
+      }
     };
 
     const onResize = () => {
-      setViewportHeight(window.innerHeight);
       onScroll();
     };
 
@@ -712,26 +726,7 @@ export function GalleryPage() {
       window.removeEventListener("scroll", onScroll);
       window.removeEventListener("resize", onResize);
     };
-  }, []);
-
-  useEffect(() => {
-    if (!firstCardMeasureRef.current) {
-      return;
-    }
-
-    const measured = firstCardMeasureRef.current.getBoundingClientRect().height;
-    if (!measured || Number.isNaN(measured)) {
-      return;
-    }
-
-    if (Math.abs(measured - (measuredCardHeight ?? 0)) > 1) {
-      setMeasuredCardHeight(measured);
-    }
-  }, [measuredCardHeight, virtualWindow.renderedAssets.length, columns]);
-
-  useEffect(() => {
-    firstCardMeasureRef.current = null;
-  }, [selectedFilter, columns]);
+  }, [renderKey, visibleAssets.length]);
 
   return (
     <PagePanel title="Gallery">
@@ -997,20 +992,12 @@ export function GalleryPage() {
       visibleAssets.length > 0 ? (
         <div className="timeline-layout">
           <div className="timeline-main">
-            {virtualWindow.isVirtualized ? (
-              <div
-                className="gallery-virtual-spacer"
-                style={{ height: virtualWindow.topSpacerHeight }}
-              />
-            ) : null}
-
             {dateGroups.map((group) => {
-              const groupedSet = new Set(group.assets.map((asset) => asset.id));
-              const groupRenderedAssets = virtualWindow.isVirtualized
-                ? virtualWindow.renderedAssets.filter((asset) => groupedSet.has(asset.id))
-                : group.assets;
+              const groupRenderedAssets = group.assets.filter((asset) =>
+                renderedAssetIdSet.has(asset.id),
+              );
 
-              if (groupRenderedAssets.length === 0 && virtualWindow.isVirtualized) {
+              if (groupRenderedAssets.length === 0) {
                 return null;
               }
 
@@ -1026,7 +1013,7 @@ export function GalleryPage() {
                   </header>
 
                   <div className="gallery-grid" style={gridStyle}>
-                    {groupRenderedAssets.map((asset, index) => {
+                    {groupRenderedAssets.map((asset) => {
                       const source = getAssetDisplaySource(
                         asset,
                         fallbackVariantByAssetId[asset.id],
@@ -1045,15 +1032,7 @@ export function GalleryPage() {
                           onToggleSelectedRange={toggleSelectedAssetRange}
                           onOpenAsset={handleOpenAsset}
                           onImageError={handleImageError}
-                          measureRef={
-                            index === 0
-                              ? (node) => {
-                                  if (node) {
-                                    firstCardMeasureRef.current = node;
-                                  }
-                                }
-                              : undefined
-                          }
+                          measureRef={undefined}
                         />
                       );
                     })}
@@ -1062,11 +1041,14 @@ export function GalleryPage() {
               );
             })}
 
-            {virtualWindow.isVirtualized ? (
-              <div
-                className="gallery-virtual-spacer"
-                style={{ height: virtualWindow.bottomSpacerHeight }}
-              />
+            {renderLimit < visibleAssets.length ? (
+              <div className="gallery-state" role="status">
+                <h2>Loading more items</h2>
+                <p>
+                  Showing {Math.min(renderLimit, visibleAssets.length)} / {visibleAssets.length}
+                  . Scroll down to continue.
+                </p>
+              </div>
             ) : null}
           </div>
 
