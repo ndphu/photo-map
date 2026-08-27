@@ -62,13 +62,20 @@ export function readViewerContext(): ViewerContext | null {
   }
 }
 
-interface GalleryScrollState {
+export interface GalleryScrollState {
   routeKey: string;
   scrollY: number;
+  anchorAssetId: string | null;
+  anchorViewportOffset: number | null;
   updatedAt: string;
 }
 
-export function saveGalleryScrollState(routeKey: string, scrollY: number): void {
+export function saveGalleryScrollState(
+  routeKey: string,
+  scrollY: number,
+  anchorAssetId: string,
+  anchorViewportOffset: number,
+): void {
   if (typeof window === "undefined") {
     return;
   }
@@ -76,6 +83,8 @@ export function saveGalleryScrollState(routeKey: string, scrollY: number): void 
   const payload: GalleryScrollState = {
     routeKey,
     scrollY,
+    anchorAssetId,
+    anchorViewportOffset,
     updatedAt: new Date().toISOString(),
   };
 
@@ -86,7 +95,7 @@ export function saveGalleryScrollState(routeKey: string, scrollY: number): void 
   }
 }
 
-export function consumeGalleryScrollState(routeKey: string): number | null {
+export function readGalleryScrollState(routeKey: string): GalleryScrollState | null {
   if (typeof window === "undefined") {
     return null;
   }
@@ -98,13 +107,51 @@ export function consumeGalleryScrollState(routeKey: string): number | null {
     }
 
     const parsed = JSON.parse(raw) as Partial<GalleryScrollState>;
-    if (!parsed || parsed.routeKey !== routeKey || typeof parsed.scrollY !== "number") {
+    if (
+      !parsed ||
+      parsed.routeKey !== routeKey ||
+      typeof parsed.scrollY !== "number" ||
+      !Number.isFinite(parsed.scrollY)
+    ) {
       return null;
     }
 
-    sessionStorage.removeItem(GALLERY_SCROLL_KEY);
-    return Math.max(0, parsed.scrollY);
+    return {
+      routeKey,
+      scrollY: Math.max(0, parsed.scrollY),
+      anchorAssetId:
+        typeof parsed.anchorAssetId === "string" ? parsed.anchorAssetId : null,
+      anchorViewportOffset:
+        typeof parsed.anchorViewportOffset === "number" &&
+        Number.isFinite(parsed.anchorViewportOffset)
+          ? parsed.anchorViewportOffset
+          : null,
+      updatedAt:
+        typeof parsed.updatedAt === "string"
+          ? parsed.updatedAt
+          : new Date().toISOString(),
+    };
   } catch {
     return null;
+  }
+}
+
+export function clearGalleryScrollState(routeKey: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(GALLERY_SCROLL_KEY);
+    if (!raw) {
+      return;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<GalleryScrollState>;
+    if (parsed.routeKey === routeKey) {
+      sessionStorage.removeItem(GALLERY_SCROLL_KEY);
+    }
+  } catch {
+    // Ignore storage failures.
   }
 }

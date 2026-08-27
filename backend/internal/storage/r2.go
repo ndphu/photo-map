@@ -1,8 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -100,6 +103,42 @@ func (service *StorageService) HeadObject(ctx context.Context, key string) (Obje
 	}
 
 	return info, nil
+}
+
+func (service *StorageService) ReadObject(ctx context.Context, key string, maxBytes int64) ([]byte, error) {
+	if maxBytes < 1 {
+		return nil, errors.New("maxBytes must be positive")
+	}
+
+	output, err := service.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(service.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer output.Body.Close()
+
+	data, err := io.ReadAll(io.LimitReader(output.Body, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("object %q exceeds the %d byte limit", key, maxBytes)
+	}
+	return data, nil
+}
+
+func (service *StorageService) PutObject(ctx context.Context, key string, contentType string, data []byte) error {
+	contentLength := int64(len(data))
+	_, err := service.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        aws.String(service.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(data),
+		ContentLength: &contentLength,
+		ContentType:   aws.String(contentType),
+	})
+	return err
 }
 
 func (service *StorageService) DeleteObjects(ctx context.Context, keys []string) error {

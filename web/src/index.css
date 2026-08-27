@@ -320,11 +320,60 @@ input {
   background: #fff;
 }
 
-.gallery-filters {
+.gallery-filter-bar {
   margin-top: 14px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.gallery-filters {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.gallery-date-filter {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.gallery-date-filter-wrap {
+  display: grid;
+  gap: 8px;
+}
+
+.gallery-date-filter label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.gallery-date-filter input {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 7px 9px;
+  background: #fff;
+  color: inherit;
+}
+
+.gallery-date-filter input:focus {
+  border-color: var(--brand);
+  outline: 2px solid rgba(13, 138, 115, 0.2);
+}
+
+.gallery-date-filter-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.gallery-date-filter-error {
+  margin-top: 0;
 }
 
 .gallery-bulk-bar {
@@ -880,6 +929,29 @@ input {
   background: var(--bg-soft);
 }
 
+.asset-viewer-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  padding: 16px;
+  overflow: auto;
+  background: rgba(20, 17, 13, 0.88);
+  overscroll-behavior: contain;
+}
+
+.asset-viewer-modal-content {
+  min-height: calc(100vh - 32px);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  padding: 16px;
+}
+
+.asset-viewer-modal .detail-viewer-frame {
+  height: calc(100vh - 190px);
+  background: #171512;
+}
+
 .detail-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
@@ -1024,6 +1096,24 @@ input {
   overflow-wrap: anywhere;
 }
 
+.detail-map-link {
+  display: inline-flex;
+  margin-top: 6px;
+  color: var(--brand-strong);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.detail-map-link:hover {
+  text-decoration: underline;
+}
+
+.detail-map-link:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid rgba(13, 138, 115, 0.3);
+  outline-offset: 2px;
+}
+
 .detail-state {
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -1121,6 +1211,21 @@ input {
   .gallery-toolbar-actions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .gallery-filter-bar,
+  .gallery-date-filter {
+    align-items: stretch;
+  }
+
+  .gallery-date-filter,
+  .gallery-date-filter-wrap,
+  .gallery-date-filter label {
+    width: 100%;
+  }
+
+  .gallery-date-filter-actions .secondary-btn {
+    flex: 1;
   }
 
   .gallery-bulk-actions {

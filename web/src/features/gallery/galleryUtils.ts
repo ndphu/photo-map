@@ -84,6 +84,58 @@ export function applyQuickFilter(
   }
 }
 
+const DATE_FILTER_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+export function isValidDateFilterValue(value: string): boolean {
+  if (!DATE_FILTER_PATTERN.test(value)) {
+    return false;
+  }
+
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, month - 1, day);
+
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  );
+}
+
+function toLocalDateFilterValue(value: string | null): string | null {
+  const epoch = parseTime(value);
+  if (epoch === null) {
+    return null;
+  }
+
+  const date = new Date(epoch);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+}
+
+export function applyDateRangeFilter(
+  assets: RemoteAssetRow[],
+  fromDate: string,
+  toDate: string,
+): RemoteAssetRow[] {
+  if (!fromDate && !toDate) {
+    return assets;
+  }
+
+  return assets.filter((asset) => {
+    const takenDate = toLocalDateFilterValue(asset.takenAt);
+    if (!takenDate) {
+      return false;
+    }
+
+    if (fromDate && takenDate < fromDate) {
+      return false;
+    }
+
+    return !toDate || takenDate <= toDate;
+  });
+}
+
 function startOfLocalDay(epoch: number): number {
   const date = new Date(epoch);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();

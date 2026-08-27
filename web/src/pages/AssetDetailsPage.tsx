@@ -1,6 +1,7 @@
 import type { CSSProperties, MouseEvent, PointerEvent, WheelEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import type { Location } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { PagePanel } from "../components/PagePanel";
 import { appDb } from "../db/appDb";
 import {
@@ -11,6 +12,7 @@ import {
 import { patchFavorite } from "../features/assets/assetActionsApi";
 import { useRemoteAsset } from "../features/assets/useRemoteAsset";
 import { readViewerContext } from "../features/gallery/viewerContext";
+import { isPresignedUrlUsable } from "../lib/presignedUrl";
 import { ApiError } from "../types/api";
 
 const MIN_ZOOM = 1;
@@ -134,6 +136,27 @@ function formatLocation(
   return null;
 }
 
+function buildGoogleMapsUrl(
+  latitude: number | null,
+  longitude: number | null,
+): string | null {
+  if (
+    latitude === null ||
+    longitude === null ||
+    !Number.isFinite(latitude) ||
+    !Number.isFinite(longitude) ||
+    latitude < -90 ||
+    latitude > 90 ||
+    longitude < -180 ||
+    longitude > 180
+  ) {
+    return null;
+  }
+
+  const query = encodeURIComponent(`${latitude},${longitude}`);
+  return `https://www.google.com/maps/search/?api=1&query=${query}`;
+}
+
 function likelyExpiredUrlError(error: unknown): boolean {
   if (!(error instanceof ApiError)) {
     return false;
@@ -159,8 +182,17 @@ async function fetchReadUrlWithSingle403Retry(
   }
 }
 
-function AssetDetailsContent({ assetId }: { assetId: string }) {
+interface AssetDetailsContentProps {
+  assetId: string;
+  isModal?: boolean;
+}
+
+function AssetDetailsContent({
+  assetId,
+  isModal = false,
+}: AssetDetailsContentProps) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { asset, isLoading, errorMessage: replicaErrorMessage } = useRemoteAsset(assetId);
 
   const [previewUrlOverride, setPreviewUrlOverride] = useState<string | null>(null);
@@ -169,6 +201,7 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
   const [isDownloadLoading, setIsDownloadLoading] = useState(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const [viewerErrorMessage, setViewerErrorMessage] = useState<string | null>(null);
+  const [viewerImageNonce, setViewerImageNonce] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [infoPanelOpen, setInfoPanelOpen] = useState(true);
@@ -182,6 +215,9 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     startPanY: number;
   } | null>(null);
   const panPointerIdRef = useRef<number | null>(null);
+  const originalUrlRef = useRef<string | null>(null);
+  const viewerRefreshInFlightRef = useRef(false);
+  const viewerRetryAttemptsRef = useRef<Record<string, number>>({});
   const zoomRef = useRef(zoom);
   const panRef = useRef(pan);
 
@@ -204,6 +240,10 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
       ? (viewerContext.assetIds[currentIndex + 1] ?? null)
       : null;
   const backPath = viewerContext?.backTo;
+  const routeState = location.state as
+    | { backgroundLocation?: Location }
+    | null;
+  const backgroundLocation = routeState?.backgroundLocation;
 
   const isVideo = asset?.mediaType === "video";
 
@@ -218,6 +258,13 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
   }, [asset?.previewUrl, asset?.thumbnailUrl, previewUrlOverride]);
 
   const activeViewerUrl = originalViewerUrl ?? baseViewerUrl;
+  const googleMapsUrl = useMemo(() => {
+    if (!asset || asset.mediaType !== "image") {
+      return null;
+    }
+
+    return buildGoogleMapsUrl(asset.latitude, asset.longitude);
+  }, [asset]);
 
   const metadataRows = useMemo<MetadataRow[]>(() => {
     if (!asset) {
@@ -528,33 +575,57 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
   }, []);
 
   const handleViewerImageError = useCallback(async () => {
-    if (!asset) {
+    if (!asset || !activeViewerUrl || viewerRefreshInFlightRef.current) {
       return;
     }
 
-    if (originalViewerUrl) {
+    const variant: ReadUrlVariant = originalViewerUrl ? "original" : "preview";
+    const retryKey = `${variant}:${activeViewerUrl}`;
+    const retryAttempts = viewerRetryAttemptsRef.current[retryKey] ?? 0;
+
+    if (isPresignedUrlUsable(activeViewerUrl) === true) {
+      if (retryAttempts < 1) {
+        viewerRetryAttemptsRef.current[retryKey] = retryAttempts + 1;
+        setViewerImageNonce((current) => current + 1);
+        return;
+      }
+
+      setViewerErrorMessage("Unable to load image from storage.");
       return;
     }
+
+    viewerRefreshInFlightRef.current = true;
 
     try {
-      const nextPreview = await fetchReadUrlWithSingle403Retry(assetId, "preview");
-      await appDb.remote_assets.update(assetId, { previewUrl: nextPreview });
-      setPreviewUrlOverride(nextPreview);
+      const nextUrl = await fetchReadUrlWithSingle403Retry(assetId, variant);
+      if (variant === "original") {
+        originalUrlRef.current = nextUrl;
+        setOriginalViewerUrl(nextUrl);
+      } else {
+        await appDb.remote_assets.update(assetId, { previewUrl: nextUrl });
+        setPreviewUrlOverride(nextUrl);
+      }
       setViewerErrorMessage(null);
     } catch (error) {
       setViewerErrorMessage(
         error instanceof Error
           ? error.message
-          : "Preview URL refresh failed",
+          : "Image URL refresh failed",
       );
+    } finally {
+      viewerRefreshInFlightRef.current = false;
     }
-  }, [asset, assetId, originalViewerUrl]);
+  }, [activeViewerUrl, asset, assetId, originalViewerUrl]);
 
   const handleLoadOriginal = useCallback(async () => {
     setIsOriginalLoading(true);
 
     try {
-      const url = await fetchReadUrlWithSingle403Retry(assetId, "original");
+      let url = originalUrlRef.current;
+      if (!url || isPresignedUrlUsable(url) !== true) {
+        url = await fetchReadUrlWithSingle403Retry(assetId, "original");
+        originalUrlRef.current = url;
+      }
       setOriginalViewerUrl(url);
       setViewerErrorMessage(null);
       resetZoomAndPan();
@@ -573,7 +644,11 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     setIsDownloadLoading(true);
 
     try {
-      const url = await fetchReadUrlWithSingle403Retry(assetId, "original");
+      let url = originalUrlRef.current;
+      if (!url || isPresignedUrlUsable(url) !== true) {
+        url = await fetchReadUrlWithSingle403Retry(assetId, "original");
+        originalUrlRef.current = url;
+      }
       const link = document.createElement("a");
       link.href = url;
       link.download = originalFilename ?? `asset-${assetId}`;
@@ -596,23 +671,34 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
     if (!previousAssetId) {
       return;
     }
-    navigate(`/assets/${previousAssetId}`);
-  }, [navigate, previousAssetId]);
+    navigate(`/assets/${previousAssetId}`, {
+      replace: isModal,
+      state: backgroundLocation ? { backgroundLocation } : undefined,
+    });
+  }, [backgroundLocation, isModal, navigate, previousAssetId]);
 
   const handleNavigateNext = useCallback(() => {
     if (!nextAssetId) {
       return;
     }
-    navigate(`/assets/${nextAssetId}`);
-  }, [navigate, nextAssetId]);
+    navigate(`/assets/${nextAssetId}`, {
+      replace: isModal,
+      state: backgroundLocation ? { backgroundLocation } : undefined,
+    });
+  }, [backgroundLocation, isModal, navigate, nextAssetId]);
 
   const handleCloseViewer = useCallback(() => {
+    if (isModal && backgroundLocation) {
+      navigate(-1);
+      return;
+    }
+
     if (backPath) {
       navigate(backPath);
       return;
     }
     navigate("/gallery");
-  }, [backPath, navigate]);
+  }, [backPath, backgroundLocation, isModal, navigate]);
 
   const handleToggleFavorite = useCallback(async () => {
     if (!asset) {
@@ -745,8 +831,9 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
               type="button"
               className="secondary-btn"
               onClick={handleCloseViewer}
+              autoFocus={isModal}
             >
-              Back
+              {isModal ? "Close" : "Back"}
             </button>
             <button
               type="button"
@@ -814,6 +901,7 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
             <>
               {activeViewerUrl ? (
                 <img
+                  key={`${activeViewerUrl}:${viewerImageNonce}`}
                   src={activeViewerUrl}
                   className={viewerImageClassName}
                   style={mediaTransformStyle}
@@ -833,6 +921,7 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
             </>
           ) : activeViewerUrl ? (
             <img
+              key={`${activeViewerUrl}:${viewerImageNonce}`}
               src={activeViewerUrl}
               className={viewerImageClassName}
               style={mediaTransformStyle}
@@ -902,7 +991,19 @@ function AssetDetailsContent({ assetId }: { assetId: string }) {
             {metadataRows.map((row) => (
               <div className="detail-meta-row" key={row.label}>
                 <dt>{row.label}</dt>
-                <dd>{row.value}</dd>
+                <dd>
+                  <span>{row.value}</span>
+                  {row.label === "Location" && googleMapsUrl ? (
+                    <a
+                      className="detail-map-link"
+                      href={googleMapsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      Open in Google Maps
+                    </a>
+                  ) : null}
+                </dd>
               </div>
             ))}
           </dl>
@@ -930,5 +1031,46 @@ export function AssetDetailsPage() {
     <PagePanel title="Asset Details">
       <AssetDetailsContent key={id} assetId={id} />
     </PagePanel>
+  );
+}
+
+export function AssetDetailsModal() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+
+  const handleBackdropMouseDown = (event: MouseEvent<HTMLDivElement>) => {
+    if (event.target === event.currentTarget) {
+      navigate(-1);
+    }
+  };
+
+  return (
+    <div
+      className="asset-viewer-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Asset viewer"
+      onMouseDown={handleBackdropMouseDown}
+    >
+      <div className="asset-viewer-modal-content">
+        {id ? (
+          <AssetDetailsContent key={id} assetId={id} isModal />
+        ) : (
+          <div className="detail-state error" role="alert">
+            <h2>Asset not found</h2>
+            <p>Missing asset identifier in route.</p>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

@@ -19,3 +19,28 @@ type BackfillAssetChangesResult struct {
 	Candidates int64 `json:"candidates"`
 	Inserted   int64 `json:"inserted"`
 }
+
+type DerivativeRepairCandidate struct {
+	AssetID      string `json:"assetId"`
+	Orientation  int16  `json:"orientation"`
+	ThumbnailKey string `json:"thumbnailKey"`
+	PreviewKey   string `json:"previewKey"`
+}
+
+type DerivativeRepairError struct {
+	AssetID string `json:"assetId"`
+	Stage   string `json:"stage"`
+	Message string `json:"message"`
+}
+
+type RebuildDerivativesResult struct {
+	DryRun          bool                        `json:"dryRun"`
+	Auto            bool                        `json:"auto"`
+	Parallel        int                         `json:"parallel"`
+	Batches         int                         `json:"batches"`
+	Candidates      int                         `json:"candidates"`
+	Processed       int                         `json:"processed"`
+	Repaired        int                         `json:"repaired"`
+	CandidateAssets []DerivativeRepairCandidate `json:"candidateAssets,omitempty"`
+	Errors          []DerivativeRepairError     `json:"errors"`
+}

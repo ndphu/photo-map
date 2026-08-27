@@ -19,6 +19,8 @@ import (
 	"photo-map-app/backend/internal/storage"
 )
 
+const maintenanceDatabaseMaxConnections int32 = 4
+
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	slog.SetDefault(logger)
@@ -35,7 +37,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := db.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := db.NewPoolWithMaxConnections(ctx, cfg.DatabaseURL, maintenanceDatabaseMaxConnections)
 	if err != nil {
 		logger.Error("failed to connect database", slog.Any("error", err))
 		os.Exit(1)
@@ -54,6 +56,8 @@ func main() {
 		result, err = runCleanup(ctx, maintenanceService, os.Args[2:])
 	case "backfill-asset-changes":
 		result, err = runAssetChangesBackfill(ctx, maintenanceService, os.Args[2:])
+	case "rebuild-derivatives":
+		result, err = runDerivativeRebuild(ctx, maintenanceService, os.Args[2:])
 	default:
 		writeUsage()
 		os.Exit(2)
@@ -102,9 +106,45 @@ func runAssetChangesBackfill(
 	return maintenanceService.BackfillAssetChanges(ctx, *dryRun)
 }
 
+func runDerivativeRebuild(
+	ctx context.Context,
+	maintenanceService *service.MaintenanceService,
+	args []string,
+) (any, error) {
+	flags := flag.NewFlagSet("rebuild-derivatives", flag.ContinueOnError)
+	dryRun := flags.Bool("dry-run", false, "list candidate assets without reading or writing R2")
+	live := flags.Bool("live", false, "rebuild candidate derivatives and update asset keys")
+	auto := flags.Bool("auto", false, "continue loading batches until no candidates remain")
+	limit := flags.Int("limit", 100, "assets per batch (total when --auto is off)")
+	parallel := flags.Int("parallel", 1, "number of assets to process concurrently (maximum 32)")
+	userID := flags.String("user-id", "", "only process assets owned by this user UUID")
+	if err := flags.Parse(args); err != nil {
+		return nil, err
+	}
+	if *dryRun == *live {
+		return nil, errors.New("specify exactly one of --dry-run or --live")
+	}
+	if *auto && !*live {
+		return nil, errors.New("--auto requires --live")
+	}
+	var userIDFilter *string
+	if *userID != "" {
+		userIDFilter = userID
+	}
+	return maintenanceService.RebuildDerivatives(ctx, service.RebuildDerivativesParams{
+		DryRun:   *dryRun,
+		Auto:     *auto,
+		Limit:    *limit,
+		Parallel: *parallel,
+		UserID:   userIDFilter,
+	})
+}
+
 func writeUsage() {
 	fmt.Fprintln(os.Stderr, "usage:")
 	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance cleanup-upload-sessions [--dry-run] [--older-than=24h] [--limit=100]")
 	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance backfill-asset-changes --dry-run")
 	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance backfill-asset-changes --live")
+	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance rebuild-derivatives --dry-run [--limit=100] [--user-id=UUID]")
+	fmt.Fprintln(os.Stderr, "  go run ./cmd/maintenance rebuild-derivatives --live [--auto] [--limit=100] [--parallel=1] [--user-id=UUID]")
 }

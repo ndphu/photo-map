@@ -1,7 +1,15 @@
-import type { CSSProperties } from "react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useLocation } from "react-router-dom";
-import type { MouseEvent } from "react";
+import type { CSSProperties, FormEvent, MouseEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import type { Location } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { appDb, type RemoteAssetRow } from "../db/appDb";
 import {
   CONCURRENCY_LIMIT,
@@ -22,20 +30,24 @@ import { useRemoteAssetsReplica } from "../features/assets/useRemoteAssetsReplic
 import { PagePanel } from "../components/PagePanel";
 import { useAssetSyncStore } from "../features/assets/assetSyncStore";
 import {
+  applyDateRangeFilter,
   applyNavViewFilter,
   applyQuickFilter,
   buildMonthIndex,
   getRangeSelectionIds,
   groupAssetsByDate,
+  isValidDateFilterValue,
   sortAssetsForTimeline,
   type GalleryNavView,
   type GalleryQuickFilter,
 } from "../features/gallery/galleryUtils";
 import {
-  consumeGalleryScrollState,
+  clearGalleryScrollState,
+  readGalleryScrollState,
   saveGalleryScrollState,
   saveViewerContext,
 } from "../features/gallery/viewerContext";
+import { isPresignedUrlUsable } from "../lib/presignedUrl";
 
 interface FilterOption {
   value: GalleryQuickFilter;
@@ -51,11 +63,18 @@ const filterOptions: FilterOption[] = [
 const IMAGE_URL_REFRESH_CONCURRENCY = 4;
 const INITIAL_RENDER_LIMIT = 420;
 const RENDER_CHUNK_SIZE = 300;
+const GALLERY_ASSET_ELEMENT_ID_PREFIX = "gallery-asset-";
+
+function getGalleryAssetElementId(assetId: string): string {
+  return `${GALLERY_ASSET_ELEMENT_ID_PREFIX}${assetId}`;
+}
 
 interface GalleryCardProps {
   asset: RemoteAssetRow;
+  backgroundLocation: Location;
   sourceUrl: string | null;
   sourceVariant: AssetReadUrlVariant | null;
+  imageNonce: number;
   isSelected: boolean;
   isSelectionMode: boolean;
   onToggleSelected: (assetId: string) => void;
@@ -69,6 +88,86 @@ interface SelectionState {
   routeKey: string;
   ids: string[];
   anchorId: string | null;
+}
+
+interface GalleryDateRangeFilterProps {
+  fromDate: string;
+  toDate: string;
+  onApply: (fromDate: string, toDate: string) => void;
+}
+
+function GalleryDateRangeFilter({
+  fromDate,
+  toDate,
+  onApply,
+}: GalleryDateRangeFilterProps) {
+  const [draftFromDate, setDraftFromDate] = useState(fromDate);
+  const [draftToDate, setDraftToDate] = useState(toDate);
+  const errorMessage =
+    draftFromDate && draftToDate && draftFromDate > draftToDate
+      ? "From date must be on or before To date."
+      : null;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!errorMessage) {
+      onApply(draftFromDate, draftToDate);
+    }
+  };
+
+  const handleClear = () => {
+    setDraftFromDate("");
+    setDraftToDate("");
+    onApply("", "");
+  };
+
+  return (
+    <div className="gallery-date-filter-wrap">
+      <form className="gallery-date-filter" onSubmit={handleSubmit}>
+        <label>
+          From
+          <input
+            type="date"
+            value={draftFromDate}
+            max={draftToDate || undefined}
+            onChange={(event) => setDraftFromDate(event.target.value)}
+          />
+        </label>
+        <label>
+          To
+          <input
+            type="date"
+            value={draftToDate}
+            min={draftFromDate || undefined}
+            onChange={(event) => setDraftToDate(event.target.value)}
+          />
+        </label>
+        <div className="gallery-date-filter-actions">
+          <button
+            type="submit"
+            className="secondary-btn"
+            disabled={Boolean(errorMessage)}
+          >
+            Apply
+          </button>
+          <button
+            type="button"
+            className="secondary-btn"
+            onClick={handleClear}
+            disabled={!draftFromDate && !draftToDate && !fromDate && !toDate}
+          >
+            Clear
+          </button>
+        </div>
+      </form>
+
+      {errorMessage ? (
+        <div className="error-banner gallery-date-filter-error" role="alert">
+          {errorMessage}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function getAssetDisplaySource(
@@ -93,8 +192,10 @@ function getAssetDisplaySource(
 
 const GalleryCard = memo(function GalleryCard({
   asset,
+  backgroundLocation,
   sourceUrl,
   sourceVariant,
+  imageNonce,
   isSelected,
   isSelectionMode,
   onToggleSelected,
@@ -120,6 +221,7 @@ const GalleryCard = memo(function GalleryCard({
 
   return (
     <article
+      id={getGalleryAssetElementId(asset.id)}
       className={
         isSelected
           ? "gallery-card is-selected"
@@ -152,13 +254,14 @@ const GalleryCard = memo(function GalleryCard({
       <Link
         className="gallery-thumb-wrap"
         to={`/assets/${asset.id}`}
+        state={{ backgroundLocation }}
         onClick={() => {
           onOpenAsset(asset.id);
         }}
       >
         {sourceUrl && sourceVariant ? (
           <img
-            key={`${asset.id}-${sourceUrl}`}
+            key={`${asset.id}-${sourceUrl}-${imageNonce}`}
             className="gallery-thumb"
             src={sourceUrl}
             alt={asset.originalFilename ?? "Gallery asset"}
@@ -202,6 +305,7 @@ function useOnlineStatus(): boolean {
 
 export function GalleryPage() {
   const location = useLocation();
+  const navigate = useNavigate();
   const status = useAssetSyncStore((state) => state.status);
   const errorMessage = useAssetSyncStore((state) => state.errorMessage);
   const lastSyncedAt = useAssetSyncStore((state) => state.lastSyncedAt);
@@ -212,12 +316,28 @@ export function GalleryPage() {
   const columns = useGalleryPreferencesStore((state) => state.columns);
   const setColumns = useGalleryPreferencesStore((state) => state.setColumns);
 
-  const [selectedFilter, setSelectedFilter] = useState<GalleryQuickFilter>("all");
+  const selectedFilter = useMemo<GalleryQuickFilter>(() => {
+    const filter = new URLSearchParams(location.search).get("filter");
+    return filter === "photos" || filter === "videos" ? filter : "all";
+  }, [location.search]);
+  const appliedDateRange = useMemo(() => {
+    const query = new URLSearchParams(location.search);
+    const fromDate = query.get("from") ?? "";
+    const toDate = query.get("to") ?? "";
+
+    return {
+      fromDate: isValidDateFilterValue(fromDate) ? fromDate : "",
+      toDate: isValidDateFilterValue(toDate) ? toDate : "",
+    };
+  }, [location.search]);
   const [fallbackVariantByAssetId, setFallbackVariantByAssetId] = useState<
     Record<string, AssetReadUrlVariant>
   >({});
   const [assetUrlOverridesByAssetId, setAssetUrlOverridesByAssetId] = useState<
     Record<string, Partial<Record<AssetReadUrlVariant, string>>>
+  >({});
+  const [imageNonceByAssetId, setImageNonceByAssetId] = useState<
+    Record<string, number>
   >({});
   const [selectionState, setSelectionState] = useState<SelectionState>({
     routeKey: "",
@@ -236,6 +356,7 @@ export function GalleryPage() {
 
   const refreshAttemptsRef = useRef<Record<string, number>>({});
   const inFlightRefreshesRef = useRef<Record<string, boolean>>({});
+  const restoredScrollRouteRef = useRef<string | null>(null);
   const urlRefreshQueueRef = useRef<{ active: number; waiters: Array<() => void> }>(
     {
       active: 0,
@@ -258,11 +379,12 @@ export function GalleryPage() {
   }, [location.pathname]);
 
   const routeKey = useMemo(() => {
-    if (navView === "photos") {
-      return `${location.pathname}?filter=${selectedFilter}`;
-    }
-    return location.pathname;
-  }, [location.pathname, navView, selectedFilter]);
+    return `${location.pathname}${location.search}`;
+  }, [location.pathname, location.search]);
+  const savedScrollState = useMemo(
+    () => readGalleryScrollState(routeKey),
+    [routeKey],
+  );
 
   const galleryHeading = useMemo(() => {
     switch (navView) {
@@ -287,12 +409,27 @@ export function GalleryPage() {
     if (navView !== "photos") {
       return navFilteredAssets;
     }
-    return applyQuickFilter(navFilteredAssets, selectedFilter);
-  }, [navFilteredAssets, navView, selectedFilter]);
+    const mediaFilteredAssets = applyQuickFilter(navFilteredAssets, selectedFilter);
+    return applyDateRangeFilter(
+      mediaFilteredAssets,
+      appliedDateRange.fromDate,
+      appliedDateRange.toDate,
+    );
+  }, [appliedDateRange, navFilteredAssets, navView, selectedFilter]);
+
+  const hasActiveDateRange = Boolean(
+    appliedDateRange.fromDate || appliedDateRange.toDate,
+  );
 
   const renderKey = `${routeKey}:${visibleAssets.length}`;
-  const renderLimit =
+  const baseRenderLimit =
     renderState.key === renderKey ? renderState.limit : INITIAL_RENDER_LIMIT;
+  const restoreAnchorIndex = savedScrollState?.anchorAssetId
+    ? visibleAssets.findIndex((asset) => asset.id === savedScrollState.anchorAssetId)
+    : -1;
+  const restoreRenderLimit =
+    restoreAnchorIndex >= 0 ? restoreAnchorIndex + 1 : INITIAL_RENDER_LIMIT;
+  const renderLimit = Math.max(baseRenderLimit, restoreRenderLimit);
 
   const renderedAssets = useMemo(
     () => visibleAssets.slice(0, Math.min(renderLimit, visibleAssets.length)),
@@ -348,6 +485,47 @@ export function GalleryPage() {
   const triggerSync = useCallback(() => {
     void sync();
   }, [sync]);
+
+  const updateMediaFilter = useCallback(
+    (filter: GalleryQuickFilter) => {
+      const query = new URLSearchParams(location.search);
+      if (filter === "all") {
+        query.delete("filter");
+      } else {
+        query.set("filter", filter);
+      }
+
+      const queryString = query.toString();
+      navigate(`${location.pathname}${queryString ? `?${queryString}` : ""}`, {
+        replace: true,
+      });
+    },
+    [location.pathname, location.search, navigate],
+  );
+
+  const updateDateRangeQuery = useCallback(
+    (fromDate: string, toDate: string) => {
+      const query = new URLSearchParams(location.search);
+
+      if (fromDate) {
+        query.set("from", fromDate);
+      } else {
+        query.delete("from");
+      }
+
+      if (toDate) {
+        query.set("to", toDate);
+      } else {
+        query.delete("to");
+      }
+
+      const queryString = query.toString();
+      navigate(`${location.pathname}${queryString ? `?${queryString}` : ""}`, {
+        replace: true,
+      });
+    },
+    [location.pathname, location.search, navigate],
+  );
 
   const selectedAssetIds = useMemo(
     () => (selectionState.routeKey === routeKey ? selectionState.ids : []),
@@ -419,7 +597,16 @@ export function GalleryPage() {
       document.documentElement.scrollTop ||
       document.body.scrollTop ||
       0;
-    saveGalleryScrollState(routeKey, scrollY);
+    const anchorElement = document.getElementById(
+      getGalleryAssetElementId(assetId),
+    );
+    const anchorViewportOffset = anchorElement?.getBoundingClientRect().top ?? 0;
+    saveGalleryScrollState(
+      routeKey,
+      scrollY,
+      assetId,
+      anchorViewportOffset,
+    );
 
     const viewerSource = navView === "photos" ? "gallery" : navView;
 
@@ -585,6 +772,12 @@ export function GalleryPage() {
         getAssetReplicaReadUrl(assetId, variant),
       );
 
+      if (variant === "thumbnail") {
+        await appDb.remote_assets.update(assetId, { thumbnailUrl: nextUrl });
+      } else {
+        await appDb.remote_assets.update(assetId, { previewUrl: nextUrl });
+      }
+
       setAssetUrlOverridesByAssetId((current) => {
         const currentAssetUrls = current[assetId] ?? {};
         return {
@@ -622,9 +815,15 @@ export function GalleryPage() {
       const attempts = refreshAttemptsRef.current[refreshKey] ?? 0;
       if (attempts >= 1) {
         if (source.variant === "preview" && (asset.thumbnailUrl || assetUrlOverridesByAssetId[asset.id]?.thumbnail)) {
+          const thumbnailUrl =
+            assetUrlOverridesByAssetId[asset.id]?.thumbnail ?? asset.thumbnailUrl;
           const thumbnailKey = `${asset.id}:thumbnail`;
           const thumbnailAttempts = refreshAttemptsRef.current[thumbnailKey] ?? 0;
-          if (!inFlightRefreshesRef.current[thumbnailKey] && thumbnailAttempts < 1) {
+          if (
+            thumbnailUrl &&
+            !inFlightRefreshesRef.current[thumbnailKey] &&
+            thumbnailAttempts < 1
+          ) {
             refreshAttemptsRef.current[thumbnailKey] = thumbnailAttempts + 1;
             inFlightRefreshesRef.current[thumbnailKey] = true;
 
@@ -634,7 +833,9 @@ export function GalleryPage() {
                 [asset.id]: "thumbnail",
               }));
 
-              await refreshSourceVariant(asset.id, "thumbnail");
+              if (isPresignedUrlUsable(thumbnailUrl) !== true) {
+                await refreshSourceVariant(asset.id, "thumbnail");
+              }
             } finally {
               inFlightRefreshesRef.current[thumbnailKey] = false;
             }
@@ -647,7 +848,14 @@ export function GalleryPage() {
       inFlightRefreshesRef.current[refreshKey] = true;
 
       try {
-        await refreshSourceVariant(asset.id, source.variant);
+        if (isPresignedUrlUsable(source.url) === true) {
+          setImageNonceByAssetId((current) => ({
+            ...current,
+            [asset.id]: (current[asset.id] ?? 0) + 1,
+          }));
+        } else {
+          await refreshSourceVariant(asset.id, source.variant);
+        }
       } finally {
         inFlightRefreshesRef.current[refreshKey] = false;
       }
@@ -666,14 +874,36 @@ export function GalleryPage() {
     }
   }, [lastSyncedAt, status, triggerSync]);
 
-  useEffect(() => {
-    const restored = consumeGalleryScrollState(routeKey);
-    if (restored === null) {
+  useLayoutEffect(() => {
+    if (
+      isLoading ||
+      !savedScrollState ||
+      restoredScrollRouteRef.current === routeKey
+    ) {
       return;
     }
 
-    window.scrollTo({ top: restored, behavior: "auto" });
-  }, [routeKey]);
+    if (savedScrollState.anchorAssetId && restoreAnchorIndex >= 0) {
+      const anchorElement = document.getElementById(
+        getGalleryAssetElementId(savedScrollState.anchorAssetId),
+      );
+      if (!anchorElement) {
+        return;
+      }
+
+      const targetOffset = savedScrollState.anchorViewportOffset ?? 0;
+      const currentOffset = anchorElement.getBoundingClientRect().top;
+      window.scrollBy({
+        top: currentOffset - targetOffset,
+        behavior: "auto",
+      });
+    } else {
+      window.scrollTo({ top: savedScrollState.scrollY, behavior: "auto" });
+    }
+
+    restoredScrollRouteRef.current = routeKey;
+    clearGalleryScrollState(routeKey);
+  }, [isLoading, restoreAnchorIndex, routeKey, savedScrollState]);
 
   useEffect(() => {
     const onScroll = () => {
@@ -774,9 +1004,10 @@ export function GalleryPage() {
         </div>
       ) : null}
 
-      <div className="gallery-filters" role="tablist" aria-label="Gallery filters">
-        {navView === "photos"
-          ? filterOptions.map((option) => (
+      {navView === "photos" ? (
+        <div className="gallery-filter-bar">
+          <div className="gallery-filters" role="tablist" aria-label="Media filters">
+            {filterOptions.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -787,13 +1018,21 @@ export function GalleryPage() {
                     ? "gallery-filter active"
                     : "gallery-filter"
                 }
-                onClick={() => setSelectedFilter(option.value)}
+                onClick={() => updateMediaFilter(option.value)}
               >
                 {option.label}
               </button>
-            ))
-          : null}
-      </div>
+            ))}
+          </div>
+
+          <GalleryDateRangeFilter
+            key={`${appliedDateRange.fromDate}:${appliedDateRange.toDate}`}
+            fromDate={appliedDateRange.fromDate}
+            toDate={appliedDateRange.toDate}
+            onApply={updateDateRangeQuery}
+          />
+        </div>
+      ) : null}
 
       {!isOnline ? (
         <div className="info-banner" role="status">
@@ -981,7 +1220,11 @@ export function GalleryPage() {
       {showEmptyState ? (
         <div className="gallery-state">
           <h2>No assets found</h2>
-          <p>No items match the selected filter.</p>
+          <p>
+            {hasActiveDateRange
+              ? "No items match the selected media and date filters."
+              : "No items match the selected filter."}
+          </p>
         </div>
       ) : null}
 
@@ -1024,8 +1267,10 @@ export function GalleryPage() {
                         <GalleryCard
                           key={asset.id}
                           asset={asset}
+                          backgroundLocation={location}
                           sourceUrl={source?.url ?? null}
                           sourceVariant={source?.variant ?? null}
+                          imageNonce={imageNonceByAssetId[asset.id] ?? 0}
                           isSelected={selectedSet.has(asset.id)}
                           isSelectionMode={isSelectionMode}
                           onToggleSelected={toggleSelectedAsset}

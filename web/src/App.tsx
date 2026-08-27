@@ -1,11 +1,21 @@
 import { useEffect } from "react";
-import { Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import type { Location } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { setUnauthorizedHandler } from "./lib/apiClient";
 import { AlbumsPage } from "./pages/AlbumsPage";
 import { AlbumDetailsPage } from "./pages/AlbumDetailsPage";
-import { AssetDetailsPage } from "./pages/AssetDetailsPage";
+import {
+  AssetDetailsModal,
+  AssetDetailsPage,
+} from "./pages/AssetDetailsPage";
 import { GalleryPage } from "./pages/GalleryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { SearchPage } from "./pages/SearchPage";
@@ -28,10 +38,16 @@ function UnauthorizedRedirectSync() {
 }
 
 function App() {
+  const location = useLocation();
+  const routeState = location.state as
+    | { backgroundLocation?: Location }
+    | null;
+  const backgroundLocation = routeState?.backgroundLocation;
+
   return (
     <>
       <UnauthorizedRedirectSync />
-      <Routes>
+      <Routes location={backgroundLocation ?? location}>
         <Route path="/login" element={<LoginPage />} />
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
@@ -49,6 +65,14 @@ function App() {
         </Route>
         <Route path="*" element={<Navigate to="/gallery" replace />} />
       </Routes>
+
+      {backgroundLocation ? (
+        <Routes>
+          <Route element={<ProtectedRoute />}>
+            <Route path="/assets/:id" element={<AssetDetailsModal />} />
+          </Route>
+        </Routes>
+      ) : null}
     </>
   );
 }

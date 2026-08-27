@@ -9,6 +9,7 @@ import {
   type SearchAssetItem,
   type SearchReadUrlVariant,
 } from "../features/search/searchApi";
+import { isPresignedUrlUsable } from "../lib/presignedUrl";
 
 type SearchFallbackVariant = SearchReadUrlVariant | undefined;
 
@@ -42,6 +43,11 @@ function getSearchDisplaySource(
 }
 
 async function shouldRefreshSource(url: string): Promise<boolean> {
+  const isUsable = isPresignedUrlUsable(url);
+  if (isUsable !== null) {
+    return !isUsable;
+  }
+
   try {
     const response = await fetch(url, {
       method: "HEAD",

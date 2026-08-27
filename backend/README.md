@@ -104,3 +104,39 @@ go run ./cmd/maintenance backfill-asset-changes --live
 
 The live command is idempotent and inserts an initial `upsert` only for assets
 that do not already have a change record.
+
+### Derivative orientation repair
+
+After applying migrations through `000006`, inspect image assets whose stored EXIF
+orientation is between 2 and 8:
+
+```bash
+go run ./cmd/maintenance rebuild-derivatives --dry-run --limit=100
+```
+
+Run the repair in bounded batches, optionally for one user:
+
+```bash
+go run ./cmd/maintenance rebuild-derivatives --live --limit=100
+go run ./cmd/maintenance rebuild-derivatives --live --limit=100 --parallel=4
+go run ./cmd/maintenance rebuild-derivatives --live --auto --limit=100 --parallel=4
+go run ./cmd/maintenance rebuild-derivatives --live --limit=100 --parallel=4 --user-id=USER_UUID
+```
+
+The command reads only each candidate's existing 1600px preview from R2. It
+applies the stored EXIF rotation or mirror transform, creates a new lossless
+1600px WebP preview and 320px WebP thumbnail to avoid another lossy generation,
+verifies both uploads, and then atomically
+switches the asset to versioned `_v2_` keys. Completed assets are recorded in
+`asset_derivative_repairs`, so rerunning the command does not process them
+again. The original object and old derivatives are not deleted.
+
+`--parallel` defaults to `1` and accepts values from 1 through 32. Start with 2
+or 4 and increase gradually because each worker independently downloads,
+decodes, rotates, resizes, encodes, and uploads one preview in memory.
+The maintenance process caps its PostgreSQL pool at four connections, so high
+image parallelism does not open the same number of database transactions.
+With `--auto`, `--limit` is the batch size rather than the total run limit. The
+command keeps loading the next UUID-ordered batch until no candidates remain.
+Failed assets are reported and skipped for the rest of that run, avoiding an
+infinite retry loop; rerunning the command attempts them again.
