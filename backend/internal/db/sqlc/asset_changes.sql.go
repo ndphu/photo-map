@@ -118,7 +118,7 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key,
   a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region,
   a.city, a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash,
   a.dominant_color, a.is_favorite, a.is_archived, a.is_hidden, a.is_trashed,
-  a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.trashed_at, a.uploaded_at, a.created_at, a.updated_at, a.derivative_version
 FROM assets a
 WHERE NOT EXISTS (
   SELECT 1 FROM asset_changes ac WHERE ac.asset_id = a.id

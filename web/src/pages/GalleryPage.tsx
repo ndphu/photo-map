@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { Location } from "react-router-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { appDb, type RemoteAssetRow } from "../db/appDb";
+import type { RemoteAssetRow } from "../db/appDb";
 import {
   CONCURRENCY_LIMIT,
   optimisticUpdateAsset,
@@ -21,6 +21,10 @@ import {
   getAssetReplicaReadUrl,
   type AssetReadUrlVariant,
 } from "../features/assets/assetChanges";
+import {
+  getRemoteAsset,
+  updateRemoteAsset,
+} from "../features/assets/assetReplica";
 import {
   MAX_GALLERY_COLUMNS,
   MIN_GALLERY_COLUMNS,
@@ -48,6 +52,7 @@ import {
   saveViewerContext,
 } from "../features/gallery/viewerContext";
 import { isPresignedUrlUsable } from "../lib/presignedUrl";
+import { useAuthStore } from "../store/authStore";
 
 interface FilterOption {
   value: GalleryQuickFilter;
@@ -306,6 +311,7 @@ function useOnlineStatus(): boolean {
 export function GalleryPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const ownerUserId = useAuthStore((state) => state.user?.id ?? null);
   const status = useAssetSyncStore((state) => state.status);
   const errorMessage = useAssetSyncStore((state) => state.errorMessage);
   const lastSyncedAt = useAssetSyncStore((state) => state.lastSyncedAt);
@@ -483,8 +489,10 @@ export function GalleryPage() {
   } as CSSProperties;
 
   const triggerSync = useCallback(() => {
-    void sync();
-  }, [sync]);
+    if (ownerUserId) {
+      void sync(ownerUserId);
+    }
+  }, [ownerUserId, sync]);
 
   const updateMediaFilter = useCallback(
     (filter: GalleryQuickFilter) => {
@@ -636,13 +644,19 @@ export function GalleryPage() {
         setActionFeedback("Select at least one asset.");
         return;
       }
+      if (!ownerUserId) {
+        setActionFeedback("Authenticated user is required.");
+        return;
+      }
 
       clearActionFeedback();
       setIsActionRunning(true);
 
       const previousRows = await Promise.all(
         ids.map(async (id) => {
-          const current = await appDb.remote_assets.get(id);
+          const current = ownerUserId
+            ? await getRemoteAsset(ownerUserId, id)
+            : undefined;
           return [id, current ?? null] as const;
         }),
       );
@@ -653,7 +667,7 @@ export function GalleryPage() {
         if (action === "restore") {
           await Promise.all(
             ids.map((id) =>
-              optimisticUpdateAsset(id, {
+              optimisticUpdateAsset(ownerUserId, id, {
                 isTrashed: false,
               }),
             ),
@@ -664,10 +678,14 @@ export function GalleryPage() {
           const succeededRestore = restoreBatches.succeededIds;
 
           for (const failedId of failedRestore) {
-            await rollbackAsset(previousMap.get(failedId) ?? null, failedId);
+            await rollbackAsset(
+              ownerUserId,
+              previousMap.get(failedId) ?? null,
+              failedId,
+            );
           }
 
-          await sync();
+          await sync(ownerUserId);
           setSelectionState({
             routeKey,
             ids: failedRestore,
@@ -682,7 +700,7 @@ export function GalleryPage() {
         if (action === "favorite") {
           await Promise.all(
             ids.map((id) =>
-              optimisticUpdateAsset(id, {
+              optimisticUpdateAsset(ownerUserId, id, {
                 isFavorite: Boolean(options?.isFavorite),
               }),
             ),
@@ -692,7 +710,7 @@ export function GalleryPage() {
         if (action === "archive") {
           await Promise.all(
             ids.map((id) =>
-              optimisticUpdateAsset(id, {
+              optimisticUpdateAsset(ownerUserId, id, {
                 isArchived: Boolean(options?.isArchived),
               }),
             ),
@@ -702,7 +720,7 @@ export function GalleryPage() {
         if (action === "trash") {
           await Promise.all(
             ids.map((id) =>
-              optimisticUpdateAsset(id, {
+              optimisticUpdateAsset(ownerUserId, id, {
                 isTrashed: true,
               }),
             ),
@@ -712,10 +730,14 @@ export function GalleryPage() {
         const result = await runMultiAction(action, ids, options);
 
         for (const failedId of result.failedIds) {
-          await rollbackAsset(previousMap.get(failedId) ?? null, failedId);
+          await rollbackAsset(
+            ownerUserId,
+            previousMap.get(failedId) ?? null,
+            failedId,
+          );
         }
 
-        await sync();
+        await sync(ownerUserId);
 
         setSelectionState({
           routeKey,
@@ -727,10 +749,10 @@ export function GalleryPage() {
         );
       } catch (error) {
         for (const [assetId, previous] of previousMap.entries()) {
-          await rollbackAsset(previous, assetId);
+          await rollbackAsset(ownerUserId, previous, assetId);
         }
 
-        await sync();
+        await sync(ownerUserId);
         setActionFeedback(
           error instanceof Error ? error.message : "Bulk action failed",
         );
@@ -738,7 +760,7 @@ export function GalleryPage() {
         setIsActionRunning(false);
       }
     },
-    [routeKey, selectedAssetIds, sync],
+    [ownerUserId, routeKey, selectedAssetIds, sync],
   );
 
   const runWithUrlRefreshLimit = useCallback(
@@ -773,9 +795,13 @@ export function GalleryPage() {
       );
 
       if (variant === "thumbnail") {
-        await appDb.remote_assets.update(assetId, { thumbnailUrl: nextUrl });
+        if (ownerUserId) {
+          await updateRemoteAsset(ownerUserId, assetId, { thumbnailUrl: nextUrl });
+        }
       } else {
-        await appDb.remote_assets.update(assetId, { previewUrl: nextUrl });
+        if (ownerUserId) {
+          await updateRemoteAsset(ownerUserId, assetId, { previewUrl: nextUrl });
+        }
       }
 
       setAssetUrlOverridesByAssetId((current) => {
@@ -789,7 +815,7 @@ export function GalleryPage() {
         };
       });
     },
-    [runWithUrlRefreshLimit],
+    [ownerUserId, runWithUrlRefreshLimit],
   );
 
   const handleImageError = useCallback(

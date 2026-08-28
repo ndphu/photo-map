@@ -1,5 +1,10 @@
-import { appDb, type RemoteAssetRow } from "../../db/appDb";
+import type { RemoteAssetRow } from "../../db/appDb";
 import { apiRequest } from "../../lib/apiClient";
+import {
+  getRemoteAsset,
+  putRemoteAsset,
+  type RemoteAssetPatch,
+} from "./assetReplica";
 
 interface FavoriteRequest {
   isFavorite: boolean;
@@ -85,19 +90,21 @@ function mergePartial(
 }
 
 export async function optimisticUpdateAsset(
+  ownerUserId: string,
   assetId: string,
-  patch: Partial<RemoteAssetRow>,
+  patch: RemoteAssetPatch,
 ): Promise<RemoteAssetRow | null> {
-  const previous = await appDb.remote_assets.get(assetId);
+  const previous = await getRemoteAsset(ownerUserId, assetId);
   if (!previous) {
     return null;
   }
 
-  await appDb.remote_assets.put(mergePartial(previous, patch));
+  await putRemoteAsset(ownerUserId, mergePartial(previous, patch));
   return previous;
 }
 
 export async function rollbackAsset(
+  ownerUserId: string,
   previous: RemoteAssetRow | null,
   fallbackAssetId: string,
 ): Promise<void> {
@@ -105,7 +112,7 @@ export async function rollbackAsset(
     return;
   }
 
-  await appDb.remote_assets.put({
+  await putRemoteAsset(ownerUserId, {
     ...previous,
     id: fallbackAssetId,
   });

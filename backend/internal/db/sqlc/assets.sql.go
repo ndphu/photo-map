@@ -33,12 +33,13 @@ INSERT INTO assets (
   longitude,
   camera_make,
   camera_model,
-  software
+  software,
+  derivative_version
 )
 VALUES (
   $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
   $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-	$21, $22, $23
+	$21, $22, $23, $24
 )
 ON CONFLICT (user_id, checksum_sha256)
 DO UPDATE SET checksum_sha256 = EXCLUDED.checksum_sha256
@@ -47,7 +48,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 type CreateAssetParams struct {
@@ -74,6 +76,7 @@ type CreateAssetParams struct {
 	CameraMake            *string
 	CameraModel           *string
 	Software              *string
+	DerivativeVersion     int16
 }
 
 func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Asset, error) {
@@ -103,6 +106,7 @@ func (q *Queries) CreateAsset(ctx context.Context, arg CreateAssetParams) (Asset
 		arg.CameraMake,
 		arg.CameraModel,
 		arg.Software,
+		arg.DerivativeVersion,
 	)
 	return scanAsset(row)
 }
@@ -129,7 +133,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 type ReplaceAssetMetadataParams struct {
@@ -161,7 +166,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE id = $1::uuid AND user_id = $2::uuid
 `
@@ -182,7 +188,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid AND checksum_sha256 = $2
 `
@@ -202,7 +209,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM upload_sessions us
 JOIN assets a ON a.id = us.asset_id
 WHERE us.id = $1::uuid AND us.user_id = $2::uuid AND a.user_id = $2::uuid
@@ -223,7 +231,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid AND is_trashed = false
 ORDER BY taken_at DESC NULLS LAST, id DESC
@@ -260,7 +269,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid
   AND ($2::text IS NULL OR media_type = $2)
@@ -340,7 +350,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 type UpdateAssetFavoriteParams struct {
@@ -361,7 +372,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 type UpdateAssetArchiveParams struct {
@@ -382,7 +394,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 func (q *Queries) MoveAssetToTrash(ctx context.Context, arg GetAssetByIDForUserParams) (Asset, error) {
@@ -397,7 +410,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 `
 
 func (q *Queries) RestoreAssetFromTrash(ctx context.Context, arg GetAssetByIDForUserParams) (Asset, error) {
@@ -555,6 +569,7 @@ func scanAsset(row assetScanner) (Asset, error) {
 		&asset.UploadedAt,
 		&asset.CreatedAt,
 		&asset.UpdatedAt,
+		&asset.DerivativeVersion,
 	)
 	return asset, err
 }
@@ -565,7 +580,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM assets a
 JOIN asset_search_metadata asm ON asm.asset_id = a.id
 WHERE a.user_id = $1::uuid

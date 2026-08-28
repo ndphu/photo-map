@@ -13,7 +13,7 @@ const listExpiredIncompleteUploadSessions = `
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE status IN ('created', 'uploading', 'uploaded', 'failed', 'expired')
   AND asset_id IS NULL

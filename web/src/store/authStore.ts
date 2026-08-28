@@ -1,6 +1,5 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { clearAssetsReplicationCache } from "../features/assets/assetChanges";
 import { useAssetSyncStore } from "../features/assets/assetSyncStore";
 import type { AuthUser } from "../types/auth";
 
@@ -31,8 +30,6 @@ export const useAuthStore = create<AuthState>()(
           user: null,
           isAuthenticated: false,
         });
-
-        void clearAssetsReplicationCache();
         useAssetSyncStore.getState().resetSyncState();
       },
     }),

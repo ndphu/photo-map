@@ -48,8 +48,9 @@ type completeUploadSessionRequest struct {
 }
 
 type updateUploadSessionStatusRequest struct {
-	Status       string  `json:"status" binding:"required,oneof=uploading uploaded failed"`
-	ErrorMessage *string `json:"errorMessage"`
+	Status            string  `json:"status" binding:"required,oneof=uploading uploaded failed"`
+	ErrorMessage      *string `json:"errorMessage"`
+	DerivativeVersion *int16  `json:"derivativeVersion" binding:"omitempty,oneof=1 2"`
 }
 
 func NewUploadHandler(uploadService *service.UploadService) *UploadHandler {
@@ -197,10 +198,11 @@ func (handler *UploadHandler) UpdateStatus(ctx *gin.Context) {
 		return
 	}
 	response, err := handler.uploadService.UpdateStatus(ctx.Request.Context(), service.UpdateUploadStatusParams{
-		UserID:          userID,
-		UploadSessionID: uploadSessionID,
-		Status:          request.Status,
-		ErrorMessage:    request.ErrorMessage,
+		UserID:            userID,
+		UploadSessionID:   uploadSessionID,
+		Status:            request.Status,
+		ErrorMessage:      request.ErrorMessage,
+		DerivativeVersion: request.DerivativeVersion,
 	})
 	if err != nil {
 		switch {
@@ -208,6 +210,8 @@ func (handler *UploadHandler) UpdateStatus(ctx *gin.Context) {
 			util.WriteError(ctx, http.StatusNotFound, "upload_session_not_found", "upload session not found")
 		case errors.Is(err, service.ErrInvalidUploadTransition):
 			util.WriteError(ctx, http.StatusConflict, "invalid_status_transition", "upload session status transition is not allowed")
+		case errors.Is(err, service.ErrInvalidDerivativeVersion):
+			util.WriteError(ctx, http.StatusBadRequest, "invalid_derivative_version", "derivativeVersion is only allowed for uploaded status and must be 1 or 2")
 		default:
 			util.WriteInternalError(ctx, err)
 		}

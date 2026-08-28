@@ -184,7 +184,7 @@ class MediaSyncWorker(
 
             if (active.session.status !in COMPLETE_READY_SESSION_STATUSES) {
                 updateBackendStatus(sessionId, UPLOAD_STATUS_UPLOADING)
-                try {
+                val derivativeVersion = try {
                     uploadMedia(active.uploadUrls, uri, asset)
                 } catch (error: R2UploadException) {
                     if (error.statusCode != HTTP_FORBIDDEN) throw error
@@ -197,7 +197,11 @@ class MediaSyncWorker(
                     active = resolution as SessionResolution.Active
                     uploadMedia(active.uploadUrls, uri, asset)
                 }
-                updateBackendStatus(sessionId, UPLOAD_STATUS_UPLOADED)
+                updateBackendStatus(
+                    sessionId,
+                    UPLOAD_STATUS_UPLOADED,
+                    derivativeVersion = derivativeVersion,
+                )
             }
 
             ensureSessionIsActive(userId)
@@ -266,24 +270,26 @@ class MediaSyncWorker(
         uploadSessionId: String,
         status: String,
         errorMessage: String? = null,
+        derivativeVersion: Int? = null,
     ) {
         container.api.updateUploadSessionStatus(
             uploadSessionId,
-            UpdateUploadSessionStatusRequest(status, errorMessage),
+            UpdateUploadSessionStatusRequest(status, errorMessage, derivativeVersion),
         )
     }
 
-    private fun uploadMedia(uploadUrls: UploadUrlsDto, uri: Uri, asset: LocalAssetEntity) {
+    private fun uploadMedia(uploadUrls: UploadUrlsDto, uri: Uri, asset: LocalAssetEntity): Int {
         putOriginal(uploadUrls.original, uri, asset.mimeType, asset.sizeBytes)
 
         val variants = runCatching {
             container.variantGenerator.generate(uri, asset.mediaType)
-        }.getOrNull() ?: return
+        }.getOrNull() ?: return LEGACY_DERIVATIVE_VERSION
         putBytes(uploadUrls.thumbnail, variants.thumbnail, "image/webp")
         putBytes(uploadUrls.preview, variants.preview, "image/webp")
         uploadUrls.posterFrame?.let { url ->
             variants.posterFrame?.let { putBytes(url, it, "image/webp") }
         }
+        return variants.derivativeVersion
     }
 
     private suspend fun completeUpload(
@@ -478,6 +484,7 @@ class MediaSyncWorker(
         private const val UPLOAD_STATUS_FAILED = "failed"
         private const val SESSION_STATUS_PROCESSING = "processing"
         private const val MEDIA_TYPE_VIDEO = "video"
+        private const val LEGACY_DERIVATIVE_VERSION = 1
         private const val HTTP_UNAUTHORIZED = 401
         private const val HTTP_FORBIDDEN = 403
         private const val HTTP_NOT_FOUND = 404

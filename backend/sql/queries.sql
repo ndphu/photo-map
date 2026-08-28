@@ -44,13 +44,13 @@ VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'cre
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at;
+  completed_at, created_at, updated_at, derivative_version;
 
 -- name: GetActiveUploadSessionByLocalAsset :one
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE user_id = $1::uuid
   AND device_id = $2::uuid
@@ -64,7 +64,7 @@ LIMIT 1;
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE id = $1::uuid AND user_id = $2::uuid
 FOR UPDATE;
@@ -78,16 +78,18 @@ WHERE id = $1::uuid AND user_id = $2::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at;
+  completed_at, created_at, updated_at, derivative_version;
 
 -- name: UpdateUploadSessionStatus :one
 UPDATE upload_sessions
-SET status = $3, error_message = $4
+SET status = $3,
+  error_message = $4,
+  derivative_version = coalesce(sqlc.narg('derivative_version'), derivative_version)
 WHERE id = $1::uuid AND user_id = $2::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at;
+  completed_at, created_at, updated_at, derivative_version;
 
 -- name: MarkUploadSessionCompleted :one
 UPDATE upload_sessions
@@ -96,19 +98,19 @@ WHERE id = $1::uuid AND user_id = $3::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at;
+  completed_at, created_at, updated_at, derivative_version;
 
 -- name: CreateAsset :one
 INSERT INTO assets (
   user_id, bucket, object_key, thumbnail_key, preview_key, poster_frame_key, media_type,
   mime_type, original_filename, file_size_bytes, checksum_sha256, taken_at, taken_at_source,
   timezone_offset_minutes, width, height, orientation, duration_ms, latitude, longitude,
-  camera_make, camera_model, software
+  camera_make, camera_model, software, derivative_version
 )
 VALUES (
   $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10,
   $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-  $21, $22, $23
+  $21, $22, $23, $24
 )
 ON CONFLICT (user_id, checksum_sha256)
 DO UPDATE SET checksum_sha256 = EXCLUDED.checksum_sha256
@@ -117,7 +119,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: GetAssetByChecksum :one
 SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_key,
@@ -125,7 +128,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid AND checksum_sha256 = $2;
 
@@ -135,7 +139,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM upload_sessions us
 JOIN assets a ON a.id = us.asset_id
 WHERE us.id = $1::uuid AND us.user_id = $2::uuid AND a.user_id = $2::uuid;
@@ -146,7 +151,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE id = $1::uuid AND user_id = $2::uuid;
 
@@ -156,7 +162,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid AND is_trashed = false
 ORDER BY taken_at DESC NULLS LAST, id DESC
@@ -168,7 +175,8 @@ SELECT id::text, user_id::text, storage_provider, bucket, object_key, thumbnail_
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version
 FROM assets
 WHERE user_id = $1::uuid
   AND ($2::text IS NULL OR media_type = $2)
@@ -201,7 +209,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: UpdateAssetArchive :one
 UPDATE assets SET is_archived = $3
@@ -211,7 +220,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: ReplaceAssetMetadata :one
 UPDATE assets SET
@@ -235,7 +245,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: MoveAssetToTrash :one
 UPDATE assets SET is_trashed = true, trashed_at = now()
@@ -245,7 +256,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: RestoreAssetFromTrash :one
 UPDATE assets SET is_trashed = false, trashed_at = NULL
@@ -255,7 +267,8 @@ RETURNING id::text, user_id::text, storage_provider, bucket, object_key, thumbna
   checksum_sha256, perceptual_hash, taken_at, taken_at_source, timezone_offset_minutes,
   width, height, orientation, duration_ms, latitude, longitude, country, region, city,
   place_name, camera_make, camera_model, software, blurhash, dominant_color, is_favorite,
-  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at;
+  is_archived, is_hidden, is_trashed, trashed_at, uploaded_at, created_at, updated_at,
+  derivative_version;
 
 -- name: DeleteAssetByID :one
 DELETE FROM assets
@@ -297,7 +310,7 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key,
   a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region,
   a.city, a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash,
   a.dominant_color, a.is_favorite, a.is_archived, a.is_hidden, a.is_trashed,
-  a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.trashed_at, a.uploaded_at, a.created_at, a.updated_at, a.derivative_version
 FROM assets a
 WHERE NOT EXISTS (
   SELECT 1 FROM asset_changes ac WHERE ac.asset_id = a.id
@@ -395,7 +408,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM album_assets aa
 JOIN albums al ON al.id = aa.album_id
 JOIN assets a ON a.id = aa.asset_id
@@ -408,7 +422,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM assets a
 JOIN asset_search_metadata asm ON asm.asset_id = a.id
 WHERE a.user_id = $1::uuid
@@ -421,7 +436,7 @@ LIMIT $3 OFFSET $4;
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE status IN ('created', 'uploading', 'uploaded', 'failed', 'expired')
   AND asset_id IS NULL

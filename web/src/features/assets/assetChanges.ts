@@ -1,5 +1,11 @@
 import { appDb, type RemoteAssetRow } from "../../db/appDb";
 import { apiRequest } from "../../lib/apiClient";
+import {
+  clearRemoteAssets,
+  deleteRemoteAsset,
+  putRemoteAsset,
+  updateRemoteAsset,
+} from "./assetReplica";
 
 const ASSET_METADATA_STATE_KEY = "asset_metadata" as const;
 const PAGE_LIMIT = 400;
@@ -71,8 +77,13 @@ interface ReadUrlResponse {
 
 export type AssetReadUrlVariant = "thumbnail" | "preview";
 
-function toRemoteAssetRow(asset: AssetChangeAsset, changeId: number): RemoteAssetRow {
+function toRemoteAssetRow(
+  ownerUserId: string,
+  asset: AssetChangeAsset,
+  changeId: number,
+): RemoteAssetRow {
   return {
+    ownerUserId,
     id: asset.id,
     mediaType: asset.mediaType,
     mimeType: asset.mimeType,
@@ -109,8 +120,11 @@ function toRemoteAssetRow(asset: AssetChangeAsset, changeId: number): RemoteAsse
   };
 }
 
-async function getLastCommittedCursor(): Promise<number> {
-  const state = await appDb.remote_sync_state.get(ASSET_METADATA_STATE_KEY);
+async function getLastCommittedCursor(ownerUserId: string): Promise<number> {
+  const state = await appDb.remote_sync_state_by_user.get([
+    ownerUserId,
+    ASSET_METADATA_STATE_KEY,
+  ]);
   return state?.value ?? 0;
 }
 
@@ -123,43 +137,62 @@ async function fetchChangesPage(cursor: number): Promise<AssetChangesPage> {
   return apiRequest<AssetChangesPage>(`/assets/changes?${query.toString()}`);
 }
 
-async function applyChangesPage(page: AssetChangesPage): Promise<void> {
-  await appDb.transaction("rw", appDb.remote_assets, appDb.remote_sync_state, async () => {
-    for (const item of page.items) {
-      if (item.changeType === "delete" || item.asset === null) {
-        await appDb.remote_assets.delete(item.assetId);
-        continue;
+async function applyChangesPage(
+  ownerUserId: string,
+  page: AssetChangesPage,
+): Promise<void> {
+  await appDb.transaction(
+    "rw",
+    appDb.remote_assets_by_user,
+    appDb.remote_sync_state_by_user,
+    async () => {
+      for (const item of page.items) {
+        if (item.changeType === "delete" || item.asset === null) {
+          await deleteRemoteAsset(ownerUserId, item.assetId);
+          continue;
+        }
+
+        const row = toRemoteAssetRow(ownerUserId, item.asset, item.changeId);
+        await putRemoteAsset(ownerUserId, row);
       }
 
-      await appDb.remote_assets.put(toRemoteAssetRow(item.asset, item.changeId));
-    }
-
-    await appDb.remote_sync_state.put({
-      key: ASSET_METADATA_STATE_KEY,
-      value: page.nextCursor,
-      updatedAt: new Date().toISOString(),
-    });
-  });
-}
-
-export async function syncAssetsChanges(options: SyncAssetsChangesOptions = {}): Promise<number> {
-  if (options.full) {
-    await appDb.transaction("rw", appDb.remote_assets, appDb.remote_sync_state, async () => {
-      await appDb.remote_assets.clear();
-      await appDb.remote_sync_state.put({
+      await appDb.remote_sync_state_by_user.put({
+        ownerUserId,
         key: ASSET_METADATA_STATE_KEY,
-        value: 0,
+        value: page.nextCursor,
         updatedAt: new Date().toISOString(),
       });
-    });
+    },
+  );
+}
+
+export async function syncAssetsChanges(
+  ownerUserId: string,
+  options: SyncAssetsChangesOptions = {},
+): Promise<number> {
+  if (options.full) {
+    await appDb.transaction(
+      "rw",
+      appDb.remote_assets_by_user,
+      appDb.remote_sync_state_by_user,
+      async () => {
+        await clearRemoteAssets(ownerUserId);
+        await appDb.remote_sync_state_by_user.put({
+          ownerUserId,
+          key: ASSET_METADATA_STATE_KEY,
+          value: 0,
+          updatedAt: new Date().toISOString(),
+        });
+      },
+    );
   }
 
-  let cursor = await getLastCommittedCursor();
+  let cursor = await getLastCommittedCursor(ownerUserId);
 
   while (true) {
     const page = await fetchChangesPage(cursor);
 
-    await applyChangesPage(page);
+    await applyChangesPage(ownerUserId, page);
     cursor = page.nextCursor;
 
     if (!page.hasMore) {
@@ -170,11 +203,19 @@ export async function syncAssetsChanges(options: SyncAssetsChangesOptions = {}):
   return cursor;
 }
 
-export async function clearAssetsReplicationCache(): Promise<void> {
-  await appDb.transaction("rw", appDb.remote_assets, appDb.remote_sync_state, async () => {
-    await appDb.remote_assets.clear();
-    await appDb.remote_sync_state.clear();
-  });
+export async function clearAssetsReplicationCache(ownerUserId: string): Promise<void> {
+  await appDb.transaction(
+    "rw",
+    appDb.remote_assets_by_user,
+    appDb.remote_sync_state_by_user,
+    async () => {
+      await clearRemoteAssets(ownerUserId);
+      await appDb.remote_sync_state_by_user.delete([
+        ownerUserId,
+        ASSET_METADATA_STATE_KEY,
+      ]);
+    },
+  );
 }
 
 export async function getAssetReplicaReadUrl(
@@ -189,15 +230,16 @@ export async function getAssetReplicaReadUrl(
 }
 
 export async function refreshAssetReplicaUrl(
+  ownerUserId: string,
   assetId: string,
   variant: AssetReadUrlVariant,
 ): Promise<void> {
   const nextUrl = await getAssetReplicaReadUrl(assetId, variant);
 
   if (variant === "thumbnail") {
-    await appDb.remote_assets.update(assetId, { thumbnailUrl: nextUrl });
+    await updateRemoteAsset(ownerUserId, assetId, { thumbnailUrl: nextUrl });
     return;
   }
 
-  await appDb.remote_assets.update(assetId, { previewUrl: nextUrl });
+  await updateRemoteAsset(ownerUserId, assetId, { previewUrl: nextUrl });
 }

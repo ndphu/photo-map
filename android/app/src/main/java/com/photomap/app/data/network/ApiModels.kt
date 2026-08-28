@@ -84,6 +84,7 @@ data class UploadSessionDto(
 data class UpdateUploadSessionStatusRequest(
     val status: String,
     val errorMessage: String? = null,
+    val derivativeVersion: Int? = null,
 )
 
 @JsonClass(generateAdapter = true)

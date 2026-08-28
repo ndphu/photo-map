@@ -126,7 +126,8 @@ SELECT a.id::text, a.user_id::text, a.storage_provider, a.bucket, a.object_key, 
   a.checksum_sha256, a.perceptual_hash, a.taken_at, a.taken_at_source, a.timezone_offset_minutes,
   a.width, a.height, a.orientation, a.duration_ms, a.latitude, a.longitude, a.country, a.region, a.city,
   a.place_name, a.camera_make, a.camera_model, a.software, a.blurhash, a.dominant_color, a.is_favorite,
-  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at
+  a.is_archived, a.is_hidden, a.is_trashed, a.trashed_at, a.uploaded_at, a.created_at, a.updated_at,
+  a.derivative_version
 FROM album_assets aa
 JOIN albums al ON al.id = aa.album_id
 JOIN assets a ON a.id = aa.asset_id

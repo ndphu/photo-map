@@ -7,7 +7,10 @@ interface AssetSyncState {
   status: AssetSyncStatus;
   errorMessage: string | null;
   lastSyncedAt: string | null;
-  syncAssetsChanges: (options?: { full?: boolean }) => Promise<void>;
+  syncAssetsChanges: (
+    ownerUserId: string,
+    options?: { full?: boolean },
+  ) => Promise<void>;
   clearError: () => void;
   resetSyncState: () => void;
 }
@@ -16,11 +19,11 @@ export const useAssetSyncStore = create<AssetSyncState>()((set) => ({
   status: "idle",
   errorMessage: null,
   lastSyncedAt: null,
-  syncAssetsChanges: async (options) => {
+  syncAssetsChanges: async (ownerUserId, options) => {
     set({ status: "syncing", errorMessage: null });
 
     try {
-      await syncAssetsChanges(options);
+      await syncAssetsChanges(ownerUserId, options);
       set({
         status: "idle",
         errorMessage: null,

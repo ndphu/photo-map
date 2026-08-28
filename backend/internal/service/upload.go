@@ -33,6 +33,8 @@ const (
 	createStatusExistingSession = "existing_session"
 	createStatusCreated         = "created"
 	resumeStatusResumed         = "resumed"
+	legacyDerivativeVersion     = int16(1)
+	normalizedDerivativeVersion = int16(2)
 )
 
 type UploadService struct {
@@ -75,10 +77,11 @@ type CompleteUploadParams struct {
 }
 
 type UpdateUploadStatusParams struct {
-	UserID          string
-	UploadSessionID string
-	Status          string
-	ErrorMessage    *string
+	UserID            string
+	UploadSessionID   string
+	Status            string
+	ErrorMessage      *string
+	DerivativeVersion *int16
 }
 
 type objectKeys struct {
@@ -315,6 +318,7 @@ func (service *UploadService) Complete(ctx context.Context, params CompleteUploa
 		CameraMake:            normalizeOptionalString(params.CameraMake),
 		CameraModel:           normalizeOptionalString(params.CameraModel),
 		Software:              normalizeOptionalString(params.Software),
+		DerivativeVersion:     session.DerivativeVersion,
 	})
 	if err != nil {
 		return model.CompleteUploadResponse{}, err
@@ -381,6 +385,10 @@ func (service *UploadService) Resume(ctx context.Context, userID string, uploadS
 }
 
 func (service *UploadService) UpdateStatus(ctx context.Context, params UpdateUploadStatusParams) (model.UploadSessionStatusResponse, error) {
+	if !isValidDerivativeVersion(params.Status, params.DerivativeVersion) {
+		return model.UploadSessionStatusResponse{}, ErrInvalidDerivativeVersion
+	}
+
 	tx, err := service.pool.Begin(ctx)
 	if err != nil {
 		return model.UploadSessionStatusResponse{}, err
@@ -402,12 +410,13 @@ func (service *UploadService) UpdateStatus(ctx context.Context, params UpdateUpl
 	if session.Status != params.Status && !isAllowedUploadStatusTransition(session.Status, params.Status) {
 		return model.UploadSessionStatusResponse{}, ErrInvalidUploadTransition
 	}
-	if session.Status != params.Status {
+	if session.Status != params.Status || params.DerivativeVersion != nil {
 		session, err = queries.UpdateUploadSessionStatus(ctx, sqlc.UpdateUploadSessionStatusParams{
-			ID:           session.ID,
-			UserID:       params.UserID,
-			Status:       params.Status,
-			ErrorMessage: normalizeOptionalString(params.ErrorMessage),
+			ID:                session.ID,
+			UserID:            params.UserID,
+			Status:            params.Status,
+			ErrorMessage:      normalizeOptionalString(params.ErrorMessage),
+			DerivativeVersion: params.DerivativeVersion,
 		})
 		if err != nil {
 			return model.UploadSessionStatusResponse{}, err
@@ -571,6 +580,17 @@ func isAllowedUploadStatusTransition(current string, next string) bool {
 	}
 	return (current == uploadStatusCreated && next == uploadStatusUploading) ||
 		(current == uploadStatusUploading && next == uploadStatusUploaded)
+}
+
+func isValidDerivativeVersion(status string, derivativeVersion *int16) bool {
+	if derivativeVersion == nil {
+		return true
+	}
+	if status != uploadStatusUploaded {
+		return false
+	}
+	return *derivativeVersion == legacyDerivativeVersion ||
+		*derivativeVersion == normalizedDerivativeVersion
 }
 
 func buildObjectKeys(userID string, assetUUID string, mediaType string, mimeType string, originalFilename string, now time.Time) objectKeys {

@@ -3,17 +3,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Location } from "react-router-dom";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { PagePanel } from "../components/PagePanel";
-import { appDb } from "../db/appDb";
 import {
   enrichRemoteAssetFromDetail,
   getAssetReadUrl,
   type ReadUrlVariant,
 } from "../features/assets/assetDetailsApi";
 import { patchFavorite } from "../features/assets/assetActionsApi";
+import { updateRemoteAsset } from "../features/assets/assetReplica";
 import { useRemoteAsset } from "../features/assets/useRemoteAsset";
 import { readViewerContext } from "../features/gallery/viewerContext";
 import { isPresignedUrlUsable } from "../lib/presignedUrl";
 import { ApiError } from "../types/api";
+import { useAuthStore } from "../store/authStore";
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
@@ -193,6 +194,7 @@ function AssetDetailsContent({
 }: AssetDetailsContentProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const ownerUserId = useAuthStore((state) => state.user?.id ?? null);
   const { asset, isLoading, errorMessage: replicaErrorMessage } = useRemoteAsset(assetId);
 
   const [previewUrlOverride, setPreviewUrlOverride] = useState<string | null>(null);
@@ -382,11 +384,15 @@ function AssetDetailsContent({
   );
 
   useEffect(() => {
+    if (!ownerUserId) {
+      return;
+    }
+
     let isCancelled = false;
 
     const run = async () => {
       try {
-        await enrichRemoteAssetFromDetail(assetId);
+        await enrichRemoteAssetFromDetail(ownerUserId, assetId);
       } catch (error) {
         if (isCancelled) {
           return;
@@ -403,10 +409,10 @@ function AssetDetailsContent({
     return () => {
       isCancelled = true;
     };
-  }, [assetId]);
+  }, [assetId, ownerUserId]);
 
   useEffect(() => {
-    if (!asset) {
+    if (!asset || !ownerUserId) {
       return;
     }
 
@@ -419,7 +425,9 @@ function AssetDetailsContent({
     const run = async () => {
       try {
         const nextPreview = await fetchReadUrlWithSingle403Retry(assetId, "preview");
-        await appDb.remote_assets.update(assetId, { previewUrl: nextPreview });
+        await updateRemoteAsset(ownerUserId, assetId, {
+          previewUrl: nextPreview,
+        });
       } catch (error) {
         if (isCancelled) {
           return;
@@ -436,7 +444,7 @@ function AssetDetailsContent({
     return () => {
       isCancelled = true;
     };
-  }, [asset, assetId]);
+  }, [asset, assetId, ownerUserId]);
 
   useEffect(() => {
     const frame = viewerFrameRef.current;
@@ -575,7 +583,12 @@ function AssetDetailsContent({
   }, []);
 
   const handleViewerImageError = useCallback(async () => {
-    if (!asset || !activeViewerUrl || viewerRefreshInFlightRef.current) {
+    if (
+      !asset ||
+      !activeViewerUrl ||
+      !ownerUserId ||
+      viewerRefreshInFlightRef.current
+    ) {
       return;
     }
 
@@ -602,7 +615,7 @@ function AssetDetailsContent({
         originalUrlRef.current = nextUrl;
         setOriginalViewerUrl(nextUrl);
       } else {
-        await appDb.remote_assets.update(assetId, { previewUrl: nextUrl });
+        await updateRemoteAsset(ownerUserId, assetId, { previewUrl: nextUrl });
         setPreviewUrlOverride(nextUrl);
       }
       setViewerErrorMessage(null);
@@ -615,7 +628,7 @@ function AssetDetailsContent({
     } finally {
       viewerRefreshInFlightRef.current = false;
     }
-  }, [activeViewerUrl, asset, assetId, originalViewerUrl]);
+  }, [activeViewerUrl, asset, assetId, originalViewerUrl, ownerUserId]);
 
   const handleLoadOriginal = useCallback(async () => {
     setIsOriginalLoading(true);
@@ -701,13 +714,13 @@ function AssetDetailsContent({
   }, [backPath, backgroundLocation, isModal, navigate]);
 
   const handleToggleFavorite = useCallback(async () => {
-    if (!asset) {
+    if (!asset || !ownerUserId) {
       return;
     }
 
     try {
       await patchFavorite(asset.id, !asset.isFavorite);
-      await appDb.remote_assets.update(asset.id, {
+      await updateRemoteAsset(ownerUserId, asset.id, {
         isFavorite: !asset.isFavorite,
       });
     } catch (error) {
@@ -715,7 +728,7 @@ function AssetDetailsContent({
         error instanceof Error ? error.message : "Unable to update favorite",
       );
     }
-  }, [asset]);
+  }, [asset, ownerUserId]);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

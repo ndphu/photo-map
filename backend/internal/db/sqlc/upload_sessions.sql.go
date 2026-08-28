@@ -31,7 +31,7 @@ VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'cre
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 `
 
 type CreateUploadSessionParams struct {
@@ -77,7 +77,7 @@ const getActiveUploadSessionByLocalAsset = `
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE user_id = $1::uuid
   AND device_id = $2::uuid
@@ -103,7 +103,7 @@ const getUploadSessionForUpdate = `
 SELECT id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 FROM upload_sessions
 WHERE id = $1::uuid AND user_id = $2::uuid
 FOR UPDATE
@@ -128,7 +128,7 @@ WHERE id = $1::uuid AND user_id = $2::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 `
 
 type ResumeUploadSessionParams struct {
@@ -143,19 +143,22 @@ func (q *Queries) ResumeUploadSession(ctx context.Context, arg ResumeUploadSessi
 
 const updateUploadSessionStatus = `
 UPDATE upload_sessions
-SET status = $3, error_message = $4
+SET status = $3,
+  error_message = $4,
+  derivative_version = coalesce($5, derivative_version)
 WHERE id = $1::uuid AND user_id = $2::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 `
 
 type UpdateUploadSessionStatusParams struct {
-	ID           string
-	UserID       string
-	Status       string
-	ErrorMessage *string
+	ID                string
+	UserID            string
+	Status            string
+	ErrorMessage      *string
+	DerivativeVersion *int16
 }
 
 func (q *Queries) UpdateUploadSessionStatus(ctx context.Context, arg UpdateUploadSessionStatusParams) (UploadSession, error) {
@@ -166,6 +169,7 @@ func (q *Queries) UpdateUploadSessionStatus(ctx context.Context, arg UpdateUploa
 		arg.UserID,
 		arg.Status,
 		arg.ErrorMessage,
+		arg.DerivativeVersion,
 	))
 }
 
@@ -176,7 +180,7 @@ WHERE id = $1::uuid AND user_id = $3::uuid
 RETURNING id::text, user_id::text, device_id::text, local_asset_id, object_key, thumbnail_key,
   preview_key, poster_frame_key, bucket, media_type, mime_type, original_filename,
   file_size_bytes, expected_checksum_sha256, status, asset_id::text, error_message, expires_at,
-  completed_at, created_at, updated_at
+  completed_at, created_at, updated_at, derivative_version
 `
 
 type MarkUploadSessionCompletedParams struct {
@@ -218,6 +222,7 @@ func scanUploadSession(row uploadSessionScanner) (UploadSession, error) {
 		&session.CompletedAt,
 		&session.CreatedAt,
 		&session.UpdatedAt,
+		&session.DerivativeVersion,
 	)
 	return session, err
 }

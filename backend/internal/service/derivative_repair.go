@@ -31,6 +31,7 @@ SELECT a.id::text, a.user_id::text, a.thumbnail_key, a.preview_key, a.orientatio
 FROM assets a
 WHERE a.media_type = 'image'
   AND a.orientation BETWEEN 2 AND 8
+  AND a.derivative_version < 2
   AND ($1::uuid IS NULL OR a.user_id = $1::uuid)
   AND ($2::uuid IS NULL OR a.id > $2::uuid)
   AND NOT EXISTS (
@@ -358,7 +359,7 @@ func (service *MaintenanceService) commitDerivativeRepair(
 
 	command, err := transaction.Exec(ctx, `
 UPDATE assets
-SET thumbnail_key = $3, preview_key = $4
+SET thumbnail_key = $3, preview_key = $4, derivative_version = 2
 WHERE id = $1::uuid
   AND user_id = $2::uuid
   AND thumbnail_key = $5

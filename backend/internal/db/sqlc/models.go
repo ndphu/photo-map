@@ -65,6 +65,7 @@ type UploadSession struct {
 	CompletedAt            *time.Time
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+	DerivativeVersion      int16
 }
 
 type Asset struct {
@@ -108,6 +109,7 @@ type Asset struct {
 	UploadedAt            time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
+	DerivativeVersion     int16
 }
 
 type AssetChange struct {

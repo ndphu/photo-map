@@ -1,5 +1,5 @@
-import { appDb } from "../../db/appDb";
 import { apiRequest } from "../../lib/apiClient";
+import { getRemoteAsset, putRemoteAsset } from "./assetReplica";
 
 export interface AssetDetailResponse {
   id: string;
@@ -56,12 +56,15 @@ export function getAssetReadUrl(
   return apiRequest<ReadUrlResponse>(`/assets/${assetId}/read-url?${query.toString()}`);
 }
 
-export async function enrichRemoteAssetFromDetail(assetId: string): Promise<void> {
+export async function enrichRemoteAssetFromDetail(
+  ownerUserId: string,
+  assetId: string,
+): Promise<void> {
   const detail = await getAssetDetail(assetId);
 
-  const existing = await appDb.remote_assets.get(assetId);
+  const existing = await getRemoteAsset(ownerUserId, assetId);
 
-  await appDb.remote_assets.put({
+  await putRemoteAsset(ownerUserId, {
     id: detail.id,
     mediaType: detail.mediaType,
     mimeType: detail.mimeType,

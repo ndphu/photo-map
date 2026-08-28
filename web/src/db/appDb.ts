@@ -1,6 +1,7 @@
 import Dexie, { type Table } from "dexie";
 
 export interface RemoteAssetRow {
+  ownerUserId: string;
   id: string;
   mediaType: string;
   mimeType: string;
@@ -38,21 +39,36 @@ export interface RemoteAssetRow {
 }
 
 export interface RemoteSyncStateRow {
+  ownerUserId: string;
   key: "asset_metadata";
   value: number;
   updatedAt: string;
 }
 
-class AppDb extends Dexie {
-  remote_assets!: Table<RemoteAssetRow, string>;
-  remote_sync_state!: Table<RemoteSyncStateRow, "asset_metadata">;
+export class AppDb extends Dexie {
+  remote_assets_by_user!: Table<RemoteAssetRow, [string, string]>;
+  remote_sync_state_by_user!: Table<
+    RemoteSyncStateRow,
+    [string, "asset_metadata"]
+  >;
 
-  constructor() {
-    super("photo-map-web-db");
+  constructor(databaseName = "photo-map-web-db") {
+    super(databaseName);
 
     this.version(2).stores({
       remote_assets: "&id, updatedAt, isTrashed, isFavorite, isArchived",
       remote_sync_state: "&key, updatedAt",
+    });
+
+    this.version(3).stores({
+      // Version 2 rows have no owner identity. Delete the legacy stores once
+      // instead of assigning them to whichever account happens to log in next.
+      remote_assets: null,
+      remote_sync_state: null,
+      remote_assets_by_user:
+        "&[ownerUserId+id], ownerUserId, updatedAt, isTrashed, isFavorite, isArchived",
+      remote_sync_state_by_user:
+        "&[ownerUserId+key], ownerUserId, updatedAt",
     });
   }
 }

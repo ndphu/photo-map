@@ -44,9 +44,10 @@ npm run build
 - Auth persistence in Zustand
 - Browser-side metadata replication with `GET /assets/changes`
   - Dexie tables:
-    - `remote_assets` (`id` primary key)
-    - `remote_sync_state` (`key="asset_metadata"`, value=`last committed changeId`)
-  - Paged sync (`limit=1000`) with per-page Dexie transaction
+    - `remote_assets_by_user` (`[ownerUserId+id]` compound primary key)
+    - `remote_sync_state_by_user` (`[ownerUserId+key]` compound primary key,
+      `key="asset_metadata"`, value=`last committed changeId`)
+  - Paged sync (`limit=400`) with per-page Dexie transaction
   - Cursor commit (`nextCursor`) only after all page items are applied
   - Upsert on `upsert`/`trash`/`restore`, delete row on tombstone (`asset: null`)
   - Cache is preserved on failed refresh
@@ -58,7 +59,8 @@ npm run build
   - `/albums`
   - `/settings`
 - Automatic logout and redirect to `/login` on HTTP 401
-- Logout clears `remote_assets` and `remote_sync_state`
+- Logout preserves each user's isolated IndexedDB replica and committed cursor
+- The version 3 IndexedDB migration discards legacy unscoped rows once
 - Responsive app shell (sidebar + topbar)
 - Sync state exposed as `idle | syncing | error` with `lastSyncedAt`
 

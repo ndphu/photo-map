@@ -1,6 +1,8 @@
 import { liveQuery } from "dexie";
 import { useEffect, useState } from "react";
-import { appDb, type RemoteAssetRow } from "../../db/appDb";
+import type { RemoteAssetRow } from "../../db/appDb";
+import { useAuthStore } from "../../store/authStore";
+import { listRemoteAssets } from "./assetReplica";
 
 interface RemoteAssetsReplicaState {
   assets: RemoteAssetRow[];
@@ -8,36 +10,49 @@ interface RemoteAssetsReplicaState {
   errorMessage: string | null;
 }
 
+interface RemoteAssetsReplicaSnapshot {
+  ownerUserId: string;
+  assets: RemoteAssetRow[];
+  errorMessage: string | null;
+}
+
 export function useRemoteAssetsReplica(): RemoteAssetsReplicaState {
-  const [assets, setAssets] = useState<RemoteAssetRow[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const ownerUserId = useAuthStore((state) => state.user?.id ?? null);
+  const [snapshot, setSnapshot] =
+    useState<RemoteAssetsReplicaSnapshot | null>(null);
 
   useEffect(() => {
-    const subscription = liveQuery(() => appDb.remote_assets.toArray()).subscribe({
+    if (!ownerUserId) {
+      return;
+    }
+
+    const subscription = liveQuery(() => listRemoteAssets(ownerUserId)).subscribe({
       next: (rows) => {
-        setAssets(rows);
-        setIsLoading(false);
-        setErrorMessage(null);
+        setSnapshot({ ownerUserId, assets: rows, errorMessage: null });
       },
       error: (error) => {
-        setIsLoading(false);
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Failed to read gallery replica from IndexedDB",
-        );
+        setSnapshot({
+          ownerUserId,
+          assets: [],
+          errorMessage:
+            error instanceof Error
+              ? error.message
+              : "Failed to read gallery replica from IndexedDB",
+        });
       },
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  }, []);
+  }, [ownerUserId]);
+
+  const hasActiveSnapshot =
+    ownerUserId !== null && snapshot?.ownerUserId === ownerUserId;
 
   return {
-    assets,
-    isLoading,
-    errorMessage,
+    assets: hasActiveSnapshot ? snapshot.assets : [],
+    isLoading: ownerUserId !== null && !hasActiveSnapshot,
+    errorMessage: hasActiveSnapshot ? snapshot.errorMessage : null,
   };
 }

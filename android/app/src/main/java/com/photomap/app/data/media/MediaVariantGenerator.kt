@@ -3,9 +3,11 @@ package com.photomap.app.data.media
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
+import androidx.exifinterface.media.ExifInterface
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
@@ -13,11 +15,49 @@ data class MediaVariants(
     val thumbnail: ByteArray,
     val preview: ByteArray,
     val posterFrame: ByteArray?,
+    val derivativeVersion: Int,
 )
+
+data class ExifOrientationTransform(
+    val flipHorizontal: Boolean,
+    val rotationDegrees: Float,
+) {
+    companion object {
+        fun fromOrientation(orientation: Int): ExifOrientationTransform = when (orientation) {
+            ExifInterface.ORIENTATION_UNDEFINED,
+            ExifInterface.ORIENTATION_NORMAL,
+            -> ExifOrientationTransform(flipHorizontal = false, rotationDegrees = 0f)
+
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL ->
+                ExifOrientationTransform(flipHorizontal = true, rotationDegrees = 0f)
+
+            ExifInterface.ORIENTATION_ROTATE_180 ->
+                ExifOrientationTransform(flipHorizontal = false, rotationDegrees = 180f)
+
+            ExifInterface.ORIENTATION_FLIP_VERTICAL ->
+                ExifOrientationTransform(flipHorizontal = true, rotationDegrees = 180f)
+
+            ExifInterface.ORIENTATION_TRANSPOSE ->
+                ExifOrientationTransform(flipHorizontal = true, rotationDegrees = 270f)
+
+            ExifInterface.ORIENTATION_ROTATE_90 ->
+                ExifOrientationTransform(flipHorizontal = false, rotationDegrees = 90f)
+
+            ExifInterface.ORIENTATION_TRANSVERSE ->
+                ExifOrientationTransform(flipHorizontal = true, rotationDegrees = 90f)
+
+            ExifInterface.ORIENTATION_ROTATE_270 ->
+                ExifOrientationTransform(flipHorizontal = false, rotationDegrees = 270f)
+
+            else -> error("Unsupported EXIF orientation: $orientation")
+        }
+    }
+}
 
 class MediaVariantGenerator(private val context: Context) {
     fun generate(uri: Uri, mediaType: String): MediaVariants {
-        val source = if (mediaType == "video") videoFrame(uri) else imageBitmap(uri)
+        val isImage = mediaType != MEDIA_TYPE_VIDEO
+        val source = if (isImage) imageBitmap(uri) else videoFrame(uri)
         val thumbnail = encodeWebp(scale(source, 320))
         val preview = encodeWebp(scale(source, 1600))
         source.recycle()
@@ -25,20 +65,50 @@ class MediaVariantGenerator(private val context: Context) {
         return MediaVariants(
             thumbnail = thumbnail,
             preview = preview,
-            posterFrame = if (mediaType == "video") preview else null,
+            posterFrame = if (isImage) null else preview,
+            derivativeVersion = if (isImage) NORMALIZED_DERIVATIVE_VERSION else LEGACY_DERIVATIVE_VERSION,
         )
     }
 
     private fun imageBitmap(uri: Uri): Bitmap {
+        val transform = context.contentResolver.openInputStream(uri)?.use { input ->
+            val orientation = ExifInterface(input).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_UNDEFINED,
+            )
+            ExifOrientationTransform.fromOrientation(orientation)
+        } ?: error("Unable to read image orientation")
+
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, bounds)
         }
         val sampleSize = calculateSampleSize(bounds.outWidth, bounds.outHeight, 2048)
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        return context.contentResolver.openInputStream(uri)?.use {
+        val decoded = context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, options)
         } ?: error("Unable to decode image")
+        return applyOrientation(decoded, transform)
+    }
+
+    private fun applyOrientation(source: Bitmap, transform: ExifOrientationTransform): Bitmap {
+        if (!transform.flipHorizontal && transform.rotationDegrees == 0f) return source
+
+        val matrix = Matrix().apply {
+            if (transform.flipHorizontal) postScale(-1f, 1f)
+            if (transform.rotationDegrees != 0f) postRotate(transform.rotationDegrees)
+        }
+        val normalized = Bitmap.createBitmap(
+            source,
+            0,
+            0,
+            source.width,
+            source.height,
+            matrix,
+            true,
+        )
+        if (normalized !== source) source.recycle()
+        return normalized
     }
 
     private fun videoFrame(uri: Uri): Bitmap {
@@ -85,5 +155,11 @@ class MediaVariantGenerator(private val context: Context) {
             sample *= 2
         }
         return sample
+    }
+
+    companion object {
+        private const val MEDIA_TYPE_VIDEO = "video"
+        private const val LEGACY_DERIVATIVE_VERSION = 1
+        private const val NORMALIZED_DERIVATIVE_VERSION = 2
     }
 }
