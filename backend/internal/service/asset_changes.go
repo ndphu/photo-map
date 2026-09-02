@@ -126,13 +126,24 @@ func (service *AssetService) ListChanges(
 	if err != nil {
 		return model.AssetChangesResponse{}, err
 	}
+	remainingCount, err := service.queries.CountAssetChangesAfterCursor(
+		ctx,
+		sqlc.CountAssetChangesAfterCursorParams{
+			UserID: params.UserID,
+			Cursor: nextCursor,
+		},
+	)
+	if err != nil {
+		return model.AssetChangesResponse{}, err
+	}
 
 	return model.AssetChangesResponse{
-		Items:        items,
-		NextCursor:   nextCursor,
-		HasMore:      nextCursor < serverCursor,
-		ServerCursor: serverCursor,
-		ServerTime:   time.Now().UTC(),
+		Items:          items,
+		NextCursor:     nextCursor,
+		HasMore:        remainingCount > 0,
+		RemainingCount: remainingCount,
+		ServerCursor:   serverCursor,
+		ServerTime:     time.Now().UTC(),
 	}, nil
 }
 

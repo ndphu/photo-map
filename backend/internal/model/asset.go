@@ -112,9 +112,10 @@ type AssetChangeItem struct {
 }
 
 type AssetChangesResponse struct {
-	Items        []AssetChangeItem `json:"items"`
-	NextCursor   int64             `json:"nextCursor"`
-	HasMore      bool              `json:"hasMore"`
-	ServerCursor int64             `json:"serverCursor"`
-	ServerTime   time.Time         `json:"serverTime"`
+	Items          []AssetChangeItem `json:"items"`
+	NextCursor     int64             `json:"nextCursor"`
+	HasMore        bool              `json:"hasMore"`
+	RemainingCount int64             `json:"remainingCount"`
+	ServerCursor   int64             `json:"serverCursor"`
+	ServerTime     time.Time         `json:"serverTime"`
 }

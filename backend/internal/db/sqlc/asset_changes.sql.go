@@ -96,6 +96,27 @@ func (q *Queries) GetLatestAssetChangeIDForUser(ctx context.Context, userID stri
 	return changeID, err
 }
 
+const countAssetChangesAfterCursor = `
+SELECT COUNT(*)::bigint
+FROM asset_changes
+WHERE user_id = $1::uuid
+  AND change_id > $2
+`
+
+type CountAssetChangesAfterCursorParams struct {
+	UserID string
+	Cursor int64
+}
+
+func (q *Queries) CountAssetChangesAfterCursor(
+	ctx context.Context,
+	arg CountAssetChangesAfterCursorParams,
+) (int64, error) {
+	var count int64
+	err := q.db.QueryRow(ctx, countAssetChangesAfterCursor, arg.UserID, arg.Cursor).Scan(&count)
+	return count, err
+}
+
 const countAssetsWithoutChanges = `
 SELECT COUNT(*)::bigint
 FROM assets a

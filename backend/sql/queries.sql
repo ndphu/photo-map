@@ -295,6 +295,12 @@ SELECT COALESCE(MAX(change_id), 0)::bigint
 FROM asset_changes
 WHERE user_id = $1::uuid;
 
+-- name: CountAssetChangesAfterCursor :one
+SELECT COUNT(*)::bigint
+FROM asset_changes
+WHERE user_id = $1::uuid
+  AND change_id > $2;
+
 -- name: CountAssetsWithoutChanges :one
 SELECT COUNT(*)::bigint
 FROM assets a
