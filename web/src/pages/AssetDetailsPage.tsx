@@ -10,8 +10,10 @@ import {
 } from "../features/assets/assetDetailsApi";
 import { patchFavorite } from "../features/assets/assetActionsApi";
 import { updateRemoteAsset } from "../features/assets/assetReplica";
+import { useGalleryPreferencesStore } from "../features/assets/galleryPreferencesStore";
 import { useRemoteAsset } from "../features/assets/useRemoteAsset";
 import { readViewerContext } from "../features/gallery/viewerContext";
+import { preloadImage } from "../lib/imagePreload";
 import { isPresignedUrlUsable } from "../lib/presignedUrl";
 import { ApiError } from "../types/api";
 import { useAuthStore } from "../store/authStore";
@@ -19,6 +21,66 @@ import { useAuthStore } from "../store/authStore";
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 5;
 const ZOOM_STEP = 0.2;
+const DESKTOP_VIEWER_MEDIA_QUERY = "(min-width: 861px)";
+
+type OriginalLoadStatus = "idle" | "loading" | "loaded" | "failed";
+
+function getOriginalButtonLabel(status: OriginalLoadStatus): string {
+  switch (status) {
+    case "loading":
+      return "Loading original...";
+    case "loaded":
+      return "Original loaded";
+    case "failed":
+      return "Retry original";
+    default:
+      return "Load original";
+  }
+}
+
+function ViewerNavigationIcon({ direction }: { direction: "previous" | "next" }) {
+  const path = direction === "previous" ? "m15 18-6-6 6-6" : "m9 6 6 6-6 6";
+
+  return (
+    <svg
+      className="detail-viewer-nav-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path d={path} />
+    </svg>
+  );
+}
+
+function InfoPanelToggleIcon({ panelOpen }: { panelOpen: boolean }) {
+  const arrowPath = panelOpen ? "m16 9 3 3-3 3" : "m19 9-3 3 3 3";
+
+  return (
+    <svg
+      className="detail-toolbar-action-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M14 4v16" />
+      <path d={arrowPath} />
+    </svg>
+  );
+}
+
+function DownloadOriginalIcon() {
+  return (
+    <svg
+      className="detail-toolbar-action-icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <path d="M12 3v12" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
 
 interface MetadataRow {
   label: string;
@@ -199,14 +261,24 @@ function AssetDetailsContent({
 
   const [previewUrlOverride, setPreviewUrlOverride] = useState<string | null>(null);
   const [originalViewerUrl, setOriginalViewerUrl] = useState<string | null>(null);
-  const [isOriginalLoading, setIsOriginalLoading] = useState(false);
+  const [originalLoadStatus, setOriginalLoadStatus] =
+    useState<OriginalLoadStatus>("idle");
+  const [isPreviewLoaded, setIsPreviewLoaded] = useState(false);
+  const [isDesktopViewport, setIsDesktopViewport] = useState(() =>
+    window.matchMedia(DESKTOP_VIEWER_MEDIA_QUERY).matches,
+  );
   const [isDownloadLoading, setIsDownloadLoading] = useState(false);
   const [detailErrorMessage, setDetailErrorMessage] = useState<string | null>(null);
   const [viewerErrorMessage, setViewerErrorMessage] = useState<string | null>(null);
   const [viewerImageNonce, setViewerImageNonce] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [infoPanelOpen, setInfoPanelOpen] = useState(true);
+  const infoPanelOpen = useGalleryPreferencesStore(
+    (state) => state.assetDetailsInfoPanelOpen,
+  );
+  const setInfoPanelOpen = useGalleryPreferencesStore(
+    (state) => state.setAssetDetailsInfoPanelOpen,
+  );
   const [isPanning, setIsPanning] = useState(false);
 
   const viewerFrameRef = useRef<HTMLDivElement | null>(null);
@@ -218,6 +290,8 @@ function AssetDetailsContent({
   } | null>(null);
   const panPointerIdRef = useRef<number | null>(null);
   const originalUrlRef = useRef<string | null>(null);
+  const originalLoadInFlightRef = useRef(false);
+  const originalLoadRequestRef = useRef(0);
   const viewerRefreshInFlightRef = useRef(false);
   const viewerRetryAttemptsRef = useRef<Record<string, number>>({});
   const zoomRef = useRef(zoom);
@@ -230,6 +304,26 @@ function AssetDetailsContent({
   useEffect(() => {
     panRef.current = pan;
   }, [pan]);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(DESKTOP_VIEWER_MEDIA_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsDesktopViewport(event.matches);
+    };
+
+    mediaQuery.addEventListener("change", handleChange);
+
+    return () => {
+      mediaQuery.removeEventListener("change", handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      originalLoadRequestRef.current += 1;
+      originalLoadInFlightRef.current = false;
+    };
+  }, []);
 
   const viewerContext = readViewerContext();
   const currentIndex = viewerContext ? viewerContext.assetIds.indexOf(assetId) : -1;
@@ -631,7 +725,15 @@ function AssetDetailsContent({
   }, [activeViewerUrl, asset, assetId, originalViewerUrl, ownerUserId]);
 
   const handleLoadOriginal = useCallback(async () => {
-    setIsOriginalLoading(true);
+    if (originalLoadInFlightRef.current) {
+      return;
+    }
+
+    originalLoadInFlightRef.current = true;
+    const requestId = originalLoadRequestRef.current + 1;
+    originalLoadRequestRef.current = requestId;
+    setOriginalLoadStatus("loading");
+    setViewerErrorMessage(null);
 
     try {
       let url = originalUrlRef.current;
@@ -639,17 +741,69 @@ function AssetDetailsContent({
         url = await fetchReadUrlWithSingle403Retry(assetId, "original");
         originalUrlRef.current = url;
       }
+
+      if (!isVideo) {
+        try {
+          await preloadImage(url);
+        } catch {
+          url = await fetchReadUrlWithSingle403Retry(assetId, "original");
+          originalUrlRef.current = url;
+          await preloadImage(url);
+        }
+      }
+
+      if (originalLoadRequestRef.current !== requestId) {
+        return;
+      }
+
       setOriginalViewerUrl(url);
+      setOriginalLoadStatus("loaded");
       setViewerErrorMessage(null);
-      resetZoomAndPan();
+
+      if (isVideo) {
+        resetZoomAndPan();
+      }
     } catch (error) {
+      if (originalLoadRequestRef.current !== requestId) {
+        return;
+      }
+
+      setOriginalLoadStatus("failed");
       setViewerErrorMessage(
         error instanceof Error ? error.message : "Unable to load original",
       );
     } finally {
-      setIsOriginalLoading(false);
+      if (originalLoadRequestRef.current === requestId) {
+        originalLoadInFlightRef.current = false;
+      }
     }
-  }, [assetId, resetZoomAndPan]);
+  }, [assetId, isVideo, resetZoomAndPan]);
+
+  useEffect(() => {
+    if (
+      !asset ||
+      asset.mediaType !== "image" ||
+      !isDesktopViewport ||
+      !isPreviewLoaded ||
+      originalLoadStatus !== "idle"
+    ) {
+      return;
+    }
+
+    void handleLoadOriginal();
+  }, [
+    asset,
+    handleLoadOriginal,
+    isDesktopViewport,
+    isPreviewLoaded,
+    originalLoadStatus,
+  ]);
+
+  const handleViewerImageLoad = useCallback(() => {
+    if (!originalViewerUrl) {
+      setIsPreviewLoaded(true);
+    }
+  }, [originalViewerUrl]);
 
   const originalFilename = asset?.originalFilename;
 
@@ -764,7 +918,7 @@ function AssetDetailsContent({
 
       if (key.toLowerCase() === "i") {
         event.preventDefault();
-        setInfoPanelOpen((current) => !current);
+        setInfoPanelOpen(!infoPanelOpen);
         return;
       }
 
@@ -795,7 +949,9 @@ function AssetDetailsContent({
     handleNavigateNext,
     handleNavigatePrevious,
     handleToggleFavorite,
+    infoPanelOpen,
     resetZoomAndPan,
+    setInfoPanelOpen,
     updateZoom,
   ]);
 
@@ -833,7 +989,9 @@ function AssetDetailsContent({
   const canZoomOut = zoom > MIN_ZOOM + 0.01;
 
   return (
-    <div className="detail-layout">
+    <div
+      className={infoPanelOpen ? "detail-layout" : "detail-layout info-hidden"}
+    >
       <section className="detail-viewer-panel">
         <div className="detail-viewer-toolbar">
           <p className="detail-viewer-caption">
@@ -851,22 +1009,6 @@ function AssetDetailsContent({
             <button
               type="button"
               className="secondary-btn"
-              onClick={handleNavigatePrevious}
-              disabled={!previousAssetId}
-            >
-              Previous
-            </button>
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={handleNavigateNext}
-              disabled={!nextAssetId}
-            >
-              Next
-            </button>
-            <button
-              type="button"
-              className="secondary-btn"
               onClick={() => {
                 void handleToggleFavorite();
               }}
@@ -875,26 +1017,52 @@ function AssetDetailsContent({
             </button>
             <button
               type="button"
-              className="secondary-btn"
-              onClick={() => setInfoPanelOpen((current) => !current)}
+              className="secondary-btn detail-icon-action"
+              aria-label={
+                infoPanelOpen
+                  ? "Hide photo information"
+                  : "Show photo information"
+              }
+              aria-expanded={infoPanelOpen}
+              aria-controls="photo-information-panel"
+              title={
+                infoPanelOpen
+                  ? "Hide photo information"
+                  : "Show photo information"
+              }
+              onClick={() => setInfoPanelOpen(!infoPanelOpen)}
             >
-              {infoPanelOpen ? "Hide info" : "Show info"}
+              <InfoPanelToggleIcon panelOpen={infoPanelOpen} />
             </button>
             <button
               type="button"
               className="secondary-btn"
               onClick={handleLoadOriginal}
-              disabled={isOriginalLoading}
+              disabled={
+                originalLoadStatus === "loading" ||
+                originalLoadStatus === "loaded"
+              }
             >
-              {isOriginalLoading ? "Loading original..." : "Load original"}
+              {getOriginalButtonLabel(originalLoadStatus)}
             </button>
             <button
               type="button"
-              className="secondary-btn"
+              className="secondary-btn detail-icon-action"
+              aria-label={
+                isDownloadLoading
+                  ? "Preparing original download"
+                  : "Download original"
+              }
+              aria-busy={isDownloadLoading}
+              title={
+                isDownloadLoading
+                  ? "Preparing original download"
+                  : "Download original"
+              }
               onClick={handleDownloadOriginal}
               disabled={isDownloadLoading}
             >
-              {isDownloadLoading ? "Preparing..." : "Download original"}
+              <DownloadOriginalIcon />
             </button>
           </div>
         </div>
@@ -910,6 +1078,31 @@ function AssetDetailsContent({
           onPointerUp={releasePointer}
           onPointerCancel={releasePointer}
         >
+          <button
+            type="button"
+            className="detail-viewer-nav detail-viewer-nav-previous"
+            aria-label="Previous asset"
+            title="Previous asset"
+            onClick={handleNavigatePrevious}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            disabled={!previousAssetId}
+          >
+            <ViewerNavigationIcon direction="previous" />
+          </button>
+          <button
+            type="button"
+            className="detail-viewer-nav detail-viewer-nav-next"
+            aria-label="Next asset"
+            title="Next asset"
+            onClick={handleNavigateNext}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            disabled={!nextAssetId}
+          >
+            <ViewerNavigationIcon direction="next" />
+          </button>
+
           {isVideo ? (
             <>
               {activeViewerUrl ? (
@@ -920,6 +1113,7 @@ function AssetDetailsContent({
                   style={mediaTransformStyle}
                   draggable={false}
                   alt={asset.originalFilename ?? "Video preview"}
+                  onLoad={handleViewerImageLoad}
                   onError={() => {
                     void handleViewerImageError();
                   }}
@@ -940,6 +1134,7 @@ function AssetDetailsContent({
               style={mediaTransformStyle}
               draggable={false}
               alt={asset.originalFilename ?? "Asset preview"}
+              onLoad={handleViewerImageLoad}
               onError={() => {
                 void handleViewerImageError();
               }}
@@ -998,7 +1193,7 @@ function AssetDetailsContent({
       </section>
 
       {infoPanelOpen ? (
-        <aside className="detail-metadata-panel">
+        <aside id="photo-information-panel" className="detail-metadata-panel">
           <h2>Metadata</h2>
           <dl>
             {metadataRows.map((row) => (

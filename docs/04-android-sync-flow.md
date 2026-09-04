@@ -88,7 +88,9 @@ Cloud gallery metadata uses a separate local replica:
 - `remote_sync_state` stores the last committed `asset_changes.change_id` cursor under id `asset_metadata`.
 - Gallery observes `remote_assets` through Room. Retrofit responses are applied transactionally and are never rendered directly.
 - Each change-feed page applies upsert/trash/restore/delete operations and advances the cursor in the same Room transaction.
-- A failed refresh preserves cached rows and shows a non-blocking error. Normal logout clears remote replica/sync state but preserves `local_assets`.
+- Metadata sync continues in 500-change pages until `hasMore=false`. After each committed page, Gallery displays the percentage and the server-provided `remainingCount`; older servers without that field use an indeterminate progress bar.
+- A failed refresh preserves cached rows and shows a non-blocking error. Normal logout keeps the last account's remote replica, cursor, pending metadata operations, local upload state, and image cache while stopping all workers.
+- Login with the same cached user resumes from the committed cursor. Login with a different or unknown user clears account-bound state, resets `local_assets` upload mappings to `pending`, and starts metadata sync from cursor `0`.
 - `GET /assets` pagination is no longer the source for the main gallery; cloud replication uses `GET /assets/changes` exclusively.
 
 ## Cloud metadata mutation queue

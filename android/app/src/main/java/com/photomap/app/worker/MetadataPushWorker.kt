@@ -47,7 +47,7 @@ class MetadataPushWorker(
             }
         }
 
-        if (pushedAny) container.galleryRepository.syncAssetMetadata(force = true)
+        if (pushedAny) container.galleryRepository.syncAssetMetadata()
         pendingOpDao.deleteCompletedOlderThan(System.currentTimeMillis() - COMPLETED_RETENTION_MILLIS)
         if (retryRequired) Result.retry() else Result.success()
     }
@@ -109,7 +109,7 @@ class MetadataPushWorker(
         operation: RemoteAssetPendingOpEntity,
         error: HttpException,
     ): PushResult {
-        container.galleryRepository.syncAssetMetadata(force = true)
+        container.galleryRepository.syncAssetMetadata()
         return if (remoteAssetDao.getAsset(operation.assetId) == null) {
             pendingOpDao.markCompleted(operation.opId, System.currentTimeMillis())
             PushResult.SUCCESS

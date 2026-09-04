@@ -149,7 +149,7 @@ class GalleryViewModel(
         .cachedIn(viewModelScope)
 
     init {
-        syncMetadata(force = false)
+        syncMetadata()
         syncController.uploadedCount
             .distinctUntilChanged()
             .drop(1)
@@ -158,11 +158,11 @@ class GalleryViewModel(
     }
 
     fun refresh() {
-        syncMetadata(force = true)
+        syncMetadata()
     }
 
     fun retry() {
-        syncMetadata(force = true)
+        syncMetadata()
     }
 
     fun increaseGalleryColumns() {
@@ -314,8 +314,8 @@ class GalleryViewModel(
         }
     }
 
-    private fun syncMetadata(force: Boolean) {
-        viewModelScope.launch { metadataSyncer.syncAssetMetadata(force) }
+    private fun syncMetadata() {
+        viewModelScope.launch { metadataSyncer.syncAssetMetadata() }
     }
 
     private fun executeBatch(action: GalleryBatchAction) {
@@ -348,7 +348,7 @@ class GalleryViewModel(
                         )
                     }
                 }
-                syncMetadata(force = false)
+                syncMetadata()
                 if (result.failedIds.isEmpty()) {
                     retryAction = null
                     _interaction.update {
@@ -423,7 +423,7 @@ private object NoOpAssetMetadataSyncer : AssetMetadataSyncer {
     override val metadataSyncStatus: StateFlow<AssetMetadataSyncStatus> =
         MutableStateFlow(AssetMetadataSyncStatus())
 
-    override suspend fun syncAssetMetadata(force: Boolean): Result<Unit> = Result.success(Unit)
+    override suspend fun syncAssetMetadata(): Result<Unit> = Result.success(Unit)
 
     override suspend fun clearRemoteReplica() = Unit
 

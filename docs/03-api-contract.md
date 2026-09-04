@@ -246,12 +246,17 @@ Changes are scoped to the authenticated user and returned in ascending
   "nextCursor": 42,
   "serverCursor": 42,
   "hasMore": false,
+  "remainingCount": 0,
   "serverTime": "2026-06-19T10:00:01Z"
 }
 ```
 
 Clients must persist `nextCursor` only after applying all returned items. Signed
 read URLs are generated per response and must not be treated as durable metadata.
+`remainingCount` is the number of change records for the authenticated user with
+`changeId > nextCursor`; clients can use it for sync progress without deriving a
+count from gaps in the global change ID sequence. `hasMore` is true exactly when
+`remainingCount` is greater than zero.
 
 ## Search
 

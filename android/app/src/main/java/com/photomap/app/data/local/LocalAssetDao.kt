@@ -191,7 +191,7 @@ interface LocalAssetDao {
             metadataBackfillError = NULL
         """,
     )
-    suspend fun resetForBackendChange(pending: String = SyncStatus.PENDING)
+    suspend fun resetForAccountChange(pending: String = SyncStatus.PENDING)
 
     @Query("SELECT COUNT(*) FROM local_assets WHERE syncStatus = :status")
     fun countByStatus(status: String): Flow<Int>

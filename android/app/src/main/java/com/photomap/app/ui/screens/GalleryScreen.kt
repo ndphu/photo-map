@@ -72,6 +72,7 @@ import androidx.paging.compose.LazyPagingItems
 import androidx.paging.compose.itemKey
 import coil3.compose.AsyncImage
 import com.photomap.app.data.gallery.AssetUiModel
+import com.photomap.app.data.gallery.AssetMetadataSyncStatus
 import com.photomap.app.data.cache.cloudImageRequest
 import com.photomap.app.data.cache.cloudImageVariant
 import com.photomap.app.data.gallery.GalleryFilter
@@ -204,6 +205,9 @@ fun GalleryScreen(
                 if (state.networkState == NetworkState.OFFLINE) OfflineBanner()
                 SyncStatusBanner(state.sync, onStartSync, onRetryFailedUploads)
                 BatchStatusBanner(state.interaction, onRetryBatch, onDismissResult)
+                if (state.metadataSync.isSyncing && assets.itemCount > 0) {
+                    MetadataSyncProgressBanner(state.metadataSync)
+                }
                 if (state.metadataSync.errorMessage != null && assets.itemCount > 0) {
                     MetadataSyncErrorBanner(state.metadataSync.errorMessage, onRetry)
                 }
@@ -215,8 +219,7 @@ fun GalleryScreen(
                     filter = state.filter,
                     networkState = state.networkState,
                     selectedIds = state.interaction.selectedIds,
-                    metadataSyncing = state.metadataSync.isSyncing,
-                    metadataError = state.metadataSync.errorMessage,
+                    metadataSync = state.metadataSync,
                     onAssetTap = onAssetTap,
                     onAssetLongPress = onAssetLongPress,
                     onThumbnailError = onThumbnailError,
@@ -404,8 +407,7 @@ private fun GalleryContent(
     filter: GalleryFilter,
     networkState: NetworkState,
     selectedIds: Set<String>,
-    metadataSyncing: Boolean,
-    metadataError: String?,
+    metadataSync: AssetMetadataSyncStatus,
     onAssetTap: (AssetUiModel) -> Unit,
     onAssetLongPress: (String) -> Unit,
     onThumbnailError: (String, String, String, Throwable) -> Unit,
@@ -417,16 +419,19 @@ private fun GalleryContent(
 ) {
     val refreshState = assets.loadState.refresh
     when {
-        metadataSyncing && assets.itemCount == 0 -> Box(
+        metadataSync.isSyncing && assets.itemCount == 0 -> Box(
             modifier.fillMaxSize(),
             contentAlignment = Alignment.Center,
         ) {
-            CircularProgressIndicator()
+            MetadataSyncProgressContent(
+                status = metadataSync,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
+            )
         }
 
-        metadataError != null && assets.itemCount == 0 -> FullScreenMessage(
+        metadataSync.errorMessage != null && assets.itemCount == 0 -> FullScreenMessage(
             title = if (networkState == NetworkState.OFFLINE) "You're offline" else "Unable to load gallery",
-            message = metadataError,
+            message = metadataSync.errorMessage,
             actionLabel = "Retry",
             onAction = onRetry,
             modifier = modifier,
@@ -459,6 +464,42 @@ private fun GalleryContent(
             onGridZoom = onGridZoom,
             modifier = modifier,
         )
+    }
+}
+
+@Composable
+private fun MetadataSyncProgressBanner(status: AssetMetadataSyncStatus) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
+        MetadataSyncProgressContent(
+            status = status,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun MetadataSyncProgressContent(
+    status: AssetMetadataSyncStatus,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = if (status.percent == null || status.remainingCount == null) {
+                "Syncing metadata..."
+            } else {
+                "Syncing metadata — ${status.percent}% · ${"%,d".format(status.remainingCount)} changes remaining"
+            },
+            style = MaterialTheme.typography.bodySmall,
+        )
+        val percent = status.percent
+        if (percent == null) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+            LinearProgressIndicator(
+                progress = { percent / 100f },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
     }
 }
 

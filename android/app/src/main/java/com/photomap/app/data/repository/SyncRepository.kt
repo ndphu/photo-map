@@ -15,11 +15,14 @@ import com.photomap.app.data.media.MediaStoreScanner
 import com.photomap.app.data.preferences.SyncSettingsStore
 import com.photomap.app.data.cache.OfflineImageCacheCoordinator
 import com.photomap.app.worker.MediaSyncWorker
+import com.photomap.app.worker.MetadataPushWorker
 import com.photomap.app.worker.PeriodicMediaScanWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 interface GallerySyncController {
@@ -159,6 +162,19 @@ class SyncRepository(
         metadataBackfill?.cancel()
     }
 
+    suspend fun cancelAllSyncAndWait() {
+        cancelAllSync()
+        withContext(Dispatchers.IO) {
+            listOf(
+                workManager.cancelUniqueWork(MediaSyncWorker.WORK_NAME),
+                workManager.cancelUniqueWork(PeriodicMediaScanWorker.WORK_NAME),
+                workManager.cancelUniqueWork(MetadataPushWorker.WORK_NAME),
+                workManager.cancelUniqueWork(OfflineImageCacheCoordinator.WORK_NAME),
+                workManager.cancelUniqueWork(AssetMetadataBackfillCoordinator.WORK_NAME),
+            ).forEach { operation -> operation.result.get() }
+        }
+    }
+
     fun setOfflineImageCacheEnabled(enabled: Boolean) {
         offlineImageCache?.setEnabled(enabled)
     }
@@ -173,10 +189,6 @@ class SyncRepository(
 
     suspend fun clearOfflineImageCache() {
         offlineImageCache?.clearAndDisable()
-    }
-
-    suspend fun clearOfflineImageCacheForLogout() {
-        offlineImageCache?.clearForAccountChange()
     }
 
     private fun networkConstraints(): Constraints = Constraints.Builder()

@@ -12,6 +12,14 @@ const PAGE_LIMIT = 400;
 
 export interface SyncAssetsChangesOptions {
   full?: boolean;
+  onProgress?: (progress: AssetSyncProgress) => void;
+}
+
+export interface AssetSyncProgress {
+  completedCount: number;
+  remainingCount: number | null;
+  totalCount: number | null;
+  percent: number | null;
 }
 
 interface AssetSnapshot {
@@ -67,8 +75,35 @@ interface AssetChangesPage {
   items: AssetChangeItem[];
   nextCursor: number;
   hasMore: boolean;
+  remainingCount?: number;
   serverCursor: number;
   serverTime: string;
+}
+
+export function calculateAssetSyncProgress(
+  completedCount: number,
+  remainingCount: number | undefined,
+): AssetSyncProgress {
+  if (remainingCount === undefined) {
+    return {
+      completedCount,
+      remainingCount: null,
+      totalCount: null,
+      percent: null,
+    };
+  }
+
+  const safeRemainingCount = Math.max(0, remainingCount);
+  const totalCount = completedCount + safeRemainingCount;
+  const percent =
+    totalCount === 0 ? 100 : Math.floor((completedCount * 100) / totalCount);
+
+  return {
+    completedCount,
+    remainingCount: safeRemainingCount,
+    totalCount,
+    percent,
+  };
 }
 
 interface ReadUrlResponse {
@@ -188,12 +223,17 @@ export async function syncAssetsChanges(
   }
 
   let cursor = await getLastCommittedCursor(ownerUserId);
+  let completedCount = 0;
 
   while (true) {
     const page = await fetchChangesPage(cursor);
 
     await applyChangesPage(ownerUserId, page);
     cursor = page.nextCursor;
+    completedCount += page.items.length;
+    options.onProgress?.(
+      calculateAssetSyncProgress(completedCount, page.remainingCount),
+    );
 
     if (!page.hasMore) {
       break;

@@ -71,8 +71,6 @@ fun PhotoMapApp(container: AppContainer) {
                 onLogin = { email, password ->
                     viewModel.login(email, password) {
                         scope.launch {
-                            container.offlineImageCacheCoordinator.clearForAccountChange()
-                            container.galleryRepository.clearRemoteReplica()
                             container.assetMutationQueue.enqueueWork()
                             container.syncRepository.scheduleBackgroundSync()
                             container.offlineImageCacheCoordinator.enqueue()
@@ -106,9 +104,7 @@ fun PhotoMapApp(container: AppContainer) {
                 onRegister = { email, password, displayName ->
                     viewModel.register(email, password, displayName) {
                         scope.launch {
-                            container.offlineImageCacheCoordinator.clearForAccountChange()
-                            container.assetMutationQueue.clearAll()
-                            container.galleryRepository.clearRemoteReplica()
+                            container.assetMutationQueue.enqueueWork()
                             container.syncRepository.scheduleBackgroundSync()
                             container.offlineImageCacheCoordinator.enqueue()
                             container.assetMetadataBackfillCoordinator.enqueue()
@@ -375,11 +371,7 @@ fun PhotoMapApp(container: AppContainer) {
                 onClearBackendError = viewModel::clearBackendError,
                 onLogout = {
                     scope.launch {
-                        container.syncRepository.cancelAllSync()
-                        container.syncRepository.clearOfflineImageCacheForLogout()
                         container.authRepository.logout()
-                        container.assetMutationQueue.clearAll()
-                        container.galleryRepository.clearRemoteReplica()
                         navController.navigate(Routes.LOGIN) {
                             popUpTo(Routes.GALLERY) { inclusive = true }
                         }

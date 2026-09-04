@@ -4,13 +4,19 @@ import Dexie from "dexie";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppDb, appDb, type RemoteAssetRow } from "../../db/appDb";
 import { useAuthStore } from "../../store/authStore";
-import { clearAssetsReplicationCache, syncAssetsChanges } from "./assetChanges";
+import {
+  calculateAssetSyncProgress,
+  clearAssetsReplicationCache,
+  syncAssetsChanges,
+  type AssetSyncProgress,
+} from "./assetChanges";
 import {
   getRemoteAsset,
   listRemoteAssets,
   putRemoteAsset,
   updateRemoteAsset,
 } from "./assetReplica";
+import { useAssetSyncStore } from "./assetSyncStore";
 
 const USER_A = "user-a";
 const USER_B = "user-b";
@@ -73,6 +79,7 @@ beforeEach(async () => {
     user: null,
     isAuthenticated: false,
   });
+  useAssetSyncStore.getState().resetSyncState();
 });
 
 afterAll(() => {
@@ -183,6 +190,7 @@ describe("user-scoped asset replica", () => {
           items: [],
           nextCursor: 100,
           hasMore: false,
+          remainingCount: 0,
           serverCursor: 100,
           serverTime: "2026-08-28T00:00:00.000Z",
         }),
@@ -194,5 +202,93 @@ describe("user-scoped asset replica", () => {
 
     expect(fetchMock).toHaveBeenCalledOnce();
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain("cursor=100");
+  });
+
+  it("reports committed multi-page progress using the server remaining count", async () => {
+    const progress: AssetSyncProgress[] = [];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                changeId: 10,
+                assetId: "deleted-a",
+                changeType: "delete",
+                changedAt: "2026-09-02T00:00:00.000Z",
+                asset: null,
+              },
+            ],
+            nextCursor: 10,
+            hasMore: true,
+            remainingCount: 1,
+            serverCursor: 20,
+            serverTime: "2026-09-02T00:00:00.000Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            items: [
+              {
+                changeId: 20,
+                assetId: "deleted-b",
+                changeType: "delete",
+                changedAt: "2026-09-02T00:00:01.000Z",
+                asset: null,
+              },
+            ],
+            nextCursor: 20,
+            hasMore: false,
+            remainingCount: 0,
+            serverCursor: 20,
+            serverTime: "2026-09-02T00:00:01.000Z",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+
+    await syncAssetsChanges(USER_A, {
+      onProgress: (value) => progress.push(value),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(progress).toEqual([
+      { completedCount: 1, remainingCount: 1, totalCount: 2, percent: 50 },
+      { completedCount: 2, remainingCount: 0, totalCount: 2, percent: 100 },
+    ]);
+  });
+
+  it("keeps progress indeterminate when an older backend omits remainingCount", () => {
+    expect(calculateAssetSyncProgress(400, undefined)).toEqual({
+      completedCount: 400,
+      remainingCount: null,
+      totalCount: null,
+      percent: null,
+    });
+  });
+
+  it("reuses one in-flight metadata sync per user", async () => {
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          items: [],
+          nextCursor: 0,
+          hasMore: false,
+          remainingCount: 0,
+          serverCursor: 0,
+          serverTime: "2026-09-02T00:00:00.000Z",
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    const sync = useAssetSyncStore.getState().syncAssetsChanges;
+
+    await Promise.all([sync(USER_A), sync(USER_A)]);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

@@ -49,6 +49,7 @@ npm run build
       `key="asset_metadata"`, value=`last committed changeId`)
   - Paged sync (`limit=400`) with per-page Dexie transaction
   - Cursor commit (`nextCursor`) only after all page items are applied
+  - Per-user single-flight requests and Gallery progress from `remainingCount`
   - Upsert on `upsert`/`trash`/`restore`, delete row on tombstone (`asset: null`)
   - Cache is preserved on failed refresh
 - Protected routes:

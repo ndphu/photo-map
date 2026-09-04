@@ -1,8 +1,5 @@
 package com.photomap.app.data.repository
 
-import com.photomap.app.data.cache.OfflineImageCacheCoordinator
-import com.photomap.app.data.gallery.GalleryRepository
-import com.photomap.app.data.local.LocalAssetDao
 import com.photomap.app.data.preferences.BackendUrlConfiguration
 import com.photomap.app.data.preferences.BackendUrlStore
 import kotlinx.coroutines.flow.StateFlow
@@ -11,12 +8,7 @@ import kotlinx.coroutines.sync.withLock
 
 class BackendServerManager(
     private val backendUrlStore: BackendUrlStore,
-    private val syncRepository: SyncRepository,
-    private val authRepository: AuthRepository,
-    private val assetMutationQueue: AssetMutationQueue,
-    private val galleryRepository: GalleryRepository,
-    private val offlineImageCacheCoordinator: OfflineImageCacheCoordinator,
-    private val localAssetDao: LocalAssetDao,
+    private val accountDataCoordinator: AccountDataCoordinator,
 ) {
     private val switchMutex = Mutex()
 
@@ -32,12 +24,7 @@ class BackendServerManager(
                 return@withLock false
             }
 
-            syncRepository.cancelAllSync()
-            authRepository.logout()
-            assetMutationQueue.clearAll()
-            galleryRepository.clearRemoteReplica()
-            offlineImageCacheCoordinator.clearForAccountChange()
-            localAssetDao.resetForBackendChange()
+            accountDataCoordinator.clearForBackendChange()
             backendUrlStore.save(nextConfiguration)
             true
         }

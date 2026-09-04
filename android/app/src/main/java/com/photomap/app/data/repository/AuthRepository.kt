@@ -13,17 +13,20 @@ class AuthRepository(
     private val context: Context,
     private val api: PhotoMapApi,
     private val tokenStore: SecureTokenStore,
+    private val accountDataCoordinator: AccountDataCoordinator,
 ) {
     fun isLoggedIn(): Boolean = tokenStore.accessToken() != null
 
     suspend fun login(email: String, password: String) {
         val response = api.login(LoginRequest(email.trim(), password))
+        accountDataCoordinator.activateAccount(response.user.id)
         tokenStore.saveSession(response.accessToken, response.user.id)
         registerDevice()
     }
 
     suspend fun register(email: String, password: String, displayName: String) {
         val response = api.register(RegisterRequest(email.trim(), password, displayName.trim()))
+        accountDataCoordinator.activateAccount(response.user.id)
         tokenStore.saveSession(response.accessToken, response.user.id)
         registerDevice()
     }
@@ -42,5 +45,5 @@ class AuthRepository(
         tokenStore.saveDeviceId(device.id)
     }
 
-    fun logout() = tokenStore.clear()
+    suspend fun logout() = accountDataCoordinator.logout()
 }

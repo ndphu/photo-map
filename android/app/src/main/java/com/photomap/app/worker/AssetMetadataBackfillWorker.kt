@@ -107,7 +107,7 @@ class AssetMetadataBackfillWorker(
                 }
             }
 
-            if (updatedAny) container.galleryRepository.syncAssetMetadata(force = true)
+            if (updatedAny) container.galleryRepository.syncAssetMetadata()
             coordinator.complete()
             Result.success()
         } catch (error: CancellationException) {

@@ -40,11 +40,21 @@ interface GalleryPager {
 data class AssetMetadataSyncStatus(
     val isSyncing: Boolean = false,
     val errorMessage: String? = null,
-)
+    val completedCount: Long = 0,
+    val remainingCount: Long? = null,
+) {
+    val totalCount: Long?
+        get() = remainingCount?.let { completedCount + it.coerceAtLeast(0) }
+
+    val percent: Int?
+        get() = totalCount?.let { total ->
+            if (total == 0L) 100 else ((completedCount * 100L) / total).toInt()
+        }
+}
 
 interface AssetMetadataSyncer {
     val metadataSyncStatus: StateFlow<AssetMetadataSyncStatus>
-    suspend fun syncAssetMetadata(force: Boolean): Result<Unit>
+    suspend fun syncAssetMetadata(): Result<Unit>
     suspend fun clearRemoteReplica()
     suspend fun refreshSignedUrl(
         assetId: String,
@@ -118,7 +128,7 @@ class GalleryRepository(
     override fun observeAssetDetail(assetId: String): Flow<AssetDetailModel?> =
         remoteAssetDao.observeAsset(assetId).map { it?.toDetailModel() }
 
-    override suspend fun syncAssetMetadata(force: Boolean): Result<Unit> = syncMutex.withLock {
+    override suspend fun syncAssetMetadata(): Result<Unit> = syncMutex.withLock {
         _metadataSyncStatus.value = AssetMetadataSyncStatus(isSyncing = true)
         try {
             var state = syncStateDao.getState(ASSET_METADATA_SYNC_STATE_ID)
@@ -128,8 +138,7 @@ class GalleryRepository(
             }
 
             var cursor = state.lastChangeCursor
-            var pageCount = 0
-            val maxPages = if (force) MAX_FORCE_SYNC_PAGES else MAX_BACKGROUND_SYNC_PAGES
+            var completedCount = 0L
             var hasMore: Boolean
             do {
                 val response = remoteDataSource.load(cursor, ASSET_CHANGES_PAGE_SIZE)
@@ -166,8 +175,13 @@ class GalleryRepository(
 
                 cursor = nextCursor
                 hasMore = response.hasMore
-                pageCount += 1
-            } while (hasMore && pageCount < maxPages)
+                completedCount += changes.size
+                _metadataSyncStatus.value = AssetMetadataSyncStatus(
+                    isSyncing = true,
+                    completedCount = completedCount,
+                    remainingCount = response.remainingCount?.coerceAtLeast(0),
+                )
+            } while (hasMore)
 
             _metadataSyncStatus.value = AssetMetadataSyncStatus()
             runCatching { onMetadataSyncCompleted() }
@@ -178,7 +192,10 @@ class GalleryRepository(
         } catch (error: Throwable) {
             val message = error.message ?: error::class.simpleName ?: "Sync failed"
             runCatching { syncStateDao.updateError(ASSET_METADATA_SYNC_STATE_ID, message) }
-            _metadataSyncStatus.value = AssetMetadataSyncStatus(errorMessage = userFacingSyncError(error))
+            _metadataSyncStatus.value = _metadataSyncStatus.value.copy(
+                isSyncing = false,
+                errorMessage = userFacingSyncError(error),
+            )
             Result.failure(error)
         }
     }
@@ -280,8 +297,6 @@ class GalleryRepository(
 
     private companion object {
         const val ASSET_CHANGES_PAGE_SIZE = 500
-        const val MAX_BACKGROUND_SYNC_PAGES = 3
-        const val MAX_FORCE_SYNC_PAGES = 10
         const val CHANGE_UPSERT = "upsert"
         const val CHANGE_TRASH = "trash"
         const val CHANGE_RESTORE = "restore"

@@ -10,6 +10,7 @@ class PhotoMapApplication : Application(), SingletonImageLoader.Factory {
 
     override fun onCreate() {
         super.onCreate()
+        container.cachedAccountStore.adoptIfMissing(container.tokenStore.userId())
         val isLoggedIn = container.authRepository.isLoggedIn()
         container.syncRepository.restoreBackgroundSync(isLoggedIn)
         container.offlineImageCacheCoordinator.restore(isLoggedIn)

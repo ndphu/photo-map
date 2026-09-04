@@ -14,21 +14,30 @@ function clampColumns(columns: number): number {
 
 interface GalleryPreferencesState {
   columns: number;
+  assetDetailsInfoPanelOpen: boolean;
   setColumns: (columns: number) => void;
+  setAssetDetailsInfoPanelOpen: (open: boolean) => void;
 }
 
 export const useGalleryPreferencesStore = create<GalleryPreferencesState>()(
   persist(
     (set) => ({
       columns: DEFAULT_GALLERY_COLUMNS,
+      assetDetailsInfoPanelOpen: true,
       setColumns: (columns) => {
         set({ columns: clampColumns(columns) });
+      },
+      setAssetDetailsInfoPanelOpen: (open) => {
+        set({ assetDetailsInfoPanelOpen: open });
       },
     }),
     {
       name: "photo-map-web-gallery-preferences",
       storage: createJSONStorage(() => localStorage),
-      partialize: (state) => ({ columns: state.columns }),
+      partialize: (state) => ({
+        columns: state.columns,
+        assetDetailsInfoPanelOpen: state.assetDetailsInfoPanelOpen,
+      }),
     },
   ),
 );

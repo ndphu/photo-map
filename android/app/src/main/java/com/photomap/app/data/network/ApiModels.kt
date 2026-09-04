@@ -153,6 +153,7 @@ data class AssetChangesResponseDto(
     val items: List<AssetChangeDto>,
     val nextCursor: Long,
     val hasMore: Boolean,
+    val remainingCount: Long? = null,
     val serverCursor: Long,
     val serverTime: String,
 )

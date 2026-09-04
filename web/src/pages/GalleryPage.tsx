@@ -315,6 +315,8 @@ export function GalleryPage() {
   const status = useAssetSyncStore((state) => state.status);
   const errorMessage = useAssetSyncStore((state) => state.errorMessage);
   const lastSyncedAt = useAssetSyncStore((state) => state.lastSyncedAt);
+  const remainingCount = useAssetSyncStore((state) => state.remainingCount);
+  const syncPercent = useAssetSyncStore((state) => state.percent);
   const sync = useAssetSyncStore((state) => state.syncAssetsChanges);
   const { assets, isLoading, errorMessage: replicaErrorMessage } =
     useRemoteAssetsReplica();
@@ -1025,8 +1027,18 @@ export function GalleryPage() {
       </div>
 
       {status === "syncing" ? (
-        <div className="info-banner" role="status">
-          Metadata sync in progress. Local timeline remains available.
+        <div className="info-banner metadata-sync-progress" role="status">
+          <span>
+            {syncPercent === null || remainingCount === null
+              ? "Syncing metadata..."
+              : `Syncing metadata — ${syncPercent}% · ${remainingCount.toLocaleString()} changes remaining`}
+          </span>
+          <progress
+            className="metadata-sync-progress-bar"
+            max={100}
+            value={syncPercent ?? undefined}
+            aria-label="Cloud metadata sync progress"
+          />
         </div>
       ) : null}
 

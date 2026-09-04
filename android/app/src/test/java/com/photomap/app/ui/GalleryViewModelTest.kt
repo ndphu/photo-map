@@ -124,7 +124,7 @@ class GalleryViewModelTest {
     }
 
     @Test
-    fun refreshRunsForcedMetadataSyncWithoutPagingCommand() = runTest(dispatcher) {
+    fun refreshRunsMetadataSyncWithoutPagingCommand() = runTest(dispatcher) {
         val metadataSyncer = FakeAssetMetadataSyncer()
         val viewModel = galleryViewModel(metadataSyncer = metadataSyncer)
         advanceUntilIdle()
@@ -132,7 +132,7 @@ class GalleryViewModelTest {
         viewModel.refresh()
         advanceUntilIdle()
 
-        assertEquals(listOf(false, true), metadataSyncer.forceCalls)
+        assertEquals(2, metadataSyncer.syncCalls)
     }
 
     @Test
@@ -226,7 +226,7 @@ class GalleryViewModelTest {
         advanceUntilIdle()
 
         assertEquals(GallerySyncSummary(pending = 3, uploading = 2, failed = 1, uploaded = 4), viewModel.uiState.value.sync)
-        assertEquals(listOf(false, true), metadataSyncer.forceCalls)
+        assertEquals(2, metadataSyncer.syncCalls)
     }
 
     private fun galleryViewModel(
@@ -257,10 +257,10 @@ private class FakeGalleryColumnPreferences(initialValue: Int = 3) : GalleryColum
 
 private class FakeAssetMetadataSyncer : AssetMetadataSyncer {
     override val metadataSyncStatus = MutableStateFlow(AssetMetadataSyncStatus())
-    val forceCalls = mutableListOf<Boolean>()
+    var syncCalls = 0
 
-    override suspend fun syncAssetMetadata(force: Boolean): Result<Unit> {
-        forceCalls += force
+    override suspend fun syncAssetMetadata(): Result<Unit> {
+        syncCalls += 1
         return Result.success(Unit)
     }
 

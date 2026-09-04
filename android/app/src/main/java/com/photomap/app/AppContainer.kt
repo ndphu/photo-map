@@ -23,6 +23,7 @@ import com.photomap.app.data.search.SearchRepository
 import com.photomap.app.data.preferences.SyncSettingsStore
 import com.photomap.app.data.preferences.GalleryPreferencesStore
 import com.photomap.app.data.preferences.BackendUrlStore
+import com.photomap.app.data.preferences.CachedAccountStore
 import com.photomap.app.data.cache.ImageCacheManager
 import com.photomap.app.data.cache.OfflineImageCacheCoordinator
 import com.photomap.app.data.repository.AssetRepository
@@ -33,6 +34,7 @@ import com.photomap.app.data.repository.AuthRepository
 import com.photomap.app.data.repository.SyncRepository
 import com.photomap.app.data.repository.BackendServerManager
 import com.photomap.app.data.repository.AssetMetadataBackfillCoordinator
+import com.photomap.app.data.repository.AccountDataCoordinator
 import com.photomap.app.data.security.SecureTokenStore
 import okhttp3.OkHttpClient
 
@@ -41,6 +43,7 @@ class AppContainer(context: Context) {
 
     val tokenStore = SecureTokenStore(appContext)
     val backendUrlStore = BackendUrlStore(appContext)
+    val cachedAccountStore = CachedAccountStore(appContext)
     val syncSettingsStore = SyncSettingsStore(appContext)
     val galleryPreferencesStore = GalleryPreferencesStore(appContext)
     val imageCacheManager = ImageCacheManager(appContext, syncSettingsStore)
@@ -70,7 +73,6 @@ class AppContainer(context: Context) {
     )
 
     private val galleryInvalidator = GalleryInvalidator()
-    val authRepository = AuthRepository(appContext, api, tokenStore)
     val assetMutationQueue = AssetMutationQueue(
         context = appContext,
         database = database,
@@ -108,13 +110,23 @@ class AppContainer(context: Context) {
         offlineImageCacheCoordinator,
         assetMetadataBackfillCoordinator,
     )
-    val backendServerManager = BackendServerManager(
-        backendUrlStore = backendUrlStore,
+    val accountDataCoordinator = AccountDataCoordinator(
+        tokenStore = tokenStore,
+        cachedAccountStore = cachedAccountStore,
         syncRepository = syncRepository,
-        authRepository = authRepository,
         assetMutationQueue = assetMutationQueue,
         galleryRepository = galleryRepository,
         offlineImageCacheCoordinator = offlineImageCacheCoordinator,
         localAssetDao = database.localAssetDao(),
+    )
+    val authRepository = AuthRepository(
+        context = appContext,
+        api = api,
+        tokenStore = tokenStore,
+        accountDataCoordinator = accountDataCoordinator,
+    )
+    val backendServerManager = BackendServerManager(
+        backendUrlStore = backendUrlStore,
+        accountDataCoordinator = accountDataCoordinator,
     )
 }
